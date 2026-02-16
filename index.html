@@ -105,17 +105,20 @@ const S={
 function ls(k,v){try{if(v===undefined)return localStorage.getItem(k);if(v===null)localStorage.removeItem(k);else localStorage.setItem(k,v)}catch(e){return null}}
 function dc(o){return JSON.parse(JSON.stringify(o))}
 
-// ===================== CLOUD SYNC (zero signup) =====================
-// Uses jsonbin-zeta.vercel.app — no account needed.
-// First tech taps "Create Cloud" → gets a Bin ID → shares with other techs.
-// All techs enter same Bin ID → shared data.
+// ===================== CLOUD SYNC (GitHub-based) =====================
+// Uses your GitHub repo as storage via GitHub Contents API.
+// First tech creates a Personal Access Token and enters it.
+// Data is stored as data.json in the repo.
+// All techs share the same token+repo to sync.
 
 const CLOUD={
-  binId:ls("bv_cloud_id")||"",
+  token:ls("bv_gh_token")||"",
+  repo:ls("bv_gh_repo")||"Erosza/Eros",  // default repo
   syncing:false,
   lastSync:ls("bv_cloud_lastsync")||"",
   error:null,
-  enabled(){return!!this.binId}
+  sha:"",  // needed for GitHub file updates
+  enabled(){return!!this.token&&!!this.repo}
 };
 
 function gatherCloudData(){
@@ -128,54 +131,37 @@ function gatherCloudData(){
   return data;
 }
 
-async function cloudCreate(){
-  CLOUD.syncing=true;CLOUD.error=null;render();
-  try{
-    const data=gatherCloudData();
-    // Strip signatures to reduce size
-    if(data.jobs){Object.values(data.jobs).forEach(j=>{if(j&&j.data&&j.data.signoff){j.data.signoff={...j.data.signoff};delete j.data.signoff.techSig;delete j.data.signoff.opSig}})}
-    if(data.history){Object.values(data.history).forEach(arr=>{if(Array.isArray(arr))arr.forEach(h=>{if(h&&h.data&&h.data.signoff){h.data.signoff={...h.data.signoff};delete h.data.signoff.techSig;delete h.data.signoff.opSig}})})}
-    const resp=await fetch("https://jsonblob.com/api/jsonBlob",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","Accept":"application/json"},
-      body:JSON.stringify(data)
-    });
-    if(!resp.ok)throw new Error("Create failed: "+resp.status);
-    // Get blob ID from response URL or headers
-    let id="";
-    const loc=resp.headers.get("Location")||"";
-    if(loc)id=loc.split("/").pop();
-    if(!id){const xb=resp.headers.get("x-jsonblob")||"";if(xb)id=xb}
-    if(!id){
-      // Try reading all exposed headers
-      const all=[];resp.headers.forEach((v,k)=>all.push(k+": "+v));
-      // Try to get from response URL
-      if(resp.url)id=resp.url.split("/").pop();
-      if(!id||id==="jsonBlob")throw new Error("No ID returned. Headers: "+all.join(", "));
-    }
-    CLOUD.binId=id;
-    ls("bv_cloud_id",id);
-    CLOUD.lastSync=new Date().toLocaleString("en-GB");
-    ls("bv_cloud_lastsync",CLOUD.lastSync);
-  }catch(e){CLOUD.error=e.message}
-  CLOUD.syncing=false;render();
+function stripSignatures(data){
+  if(data.jobs){Object.values(data.jobs).forEach(j=>{if(j&&j.data&&j.data.signoff){j.data.signoff={...j.data.signoff};delete j.data.signoff.techSig;delete j.data.signoff.opSig}})}
+  if(data.history){Object.values(data.history).forEach(arr=>{if(Array.isArray(arr))arr.forEach(h=>{if(h&&h.data&&h.data.signoff){h.data.signoff={...h.data.signoff};delete h.data.signoff.techSig;delete h.data.signoff.opSig}})})}
+  return data;
+}
+
+function ghHeaders(){
+  return {"Authorization":"Bearer "+CLOUD.token,"Accept":"application/vnd.github.v3+json","Content-Type":"application/json"};
 }
 
 async function cloudPush(){
   if(!CLOUD.enabled()||CLOUD.syncing)return;
   CLOUD.syncing=true;CLOUD.error=null;render();
   try{
-    const data=gatherCloudData();
-    // Strip signatures
-    if(data.jobs){Object.values(data.jobs).forEach(j=>{if(j&&j.data&&j.data.signoff){j.data.signoff={...j.data.signoff};delete j.data.signoff.techSig;delete j.data.signoff.opSig}})}
-    if(data.history){Object.values(data.history).forEach(arr=>{if(Array.isArray(arr))arr.forEach(h=>{if(h&&h.data&&h.data.signoff){h.data.signoff={...h.data.signoff};delete h.data.signoff.techSig;delete h.data.signoff.opSig}})})}
-    const body=JSON.stringify(data);
-    const resp=await fetch(`https://jsonblob.com/api/jsonBlob/${CLOUD.binId}`,{
-      method:"PUT",
-      headers:{"Content-Type":"application/json","Accept":"application/json"},
-      body:body
+    const data=stripSignatures(gatherCloudData());
+    const content=btoa(unescape(encodeURIComponent(JSON.stringify(data,null,0))));
+    // First get current SHA if we don't have it
+    if(!CLOUD.sha){
+      try{
+        const getResp=await fetch(`https://api.github.com/repos/${CLOUD.repo}/contents/data.json`,{headers:ghHeaders()});
+        if(getResp.ok){const f=await getResp.json();CLOUD.sha=f.sha}
+      }catch(e){}
+    }
+    const body={message:"sync "+new Date().toISOString(),content:content};
+    if(CLOUD.sha)body.sha=CLOUD.sha;
+    const resp=await fetch(`https://api.github.com/repos/${CLOUD.repo}/contents/data.json`,{
+      method:"PUT",headers:ghHeaders(),body:JSON.stringify(body)
     });
-    if(!resp.ok)throw new Error("Push failed: "+resp.status+" ("+Math.round(body.length/1024)+"KB)");
+    if(!resp.ok){const t=await resp.text();throw new Error("Push "+resp.status+": "+t.substring(0,100))}
+    const result=await resp.json();
+    CLOUD.sha=result.content.sha;
     CLOUD.lastSync=new Date().toLocaleString("en-GB");
     ls("bv_cloud_lastsync",CLOUD.lastSync);
   }catch(e){CLOUD.error="Push: "+e.message}
@@ -186,11 +172,13 @@ async function cloudPull(){
   if(!CLOUD.enabled()||CLOUD.syncing)return;
   CLOUD.syncing=true;CLOUD.error=null;render();
   try{
-    const resp=await fetch(`https://jsonblob.com/api/jsonBlob/${CLOUD.binId}`,{
-      headers:{"Accept":"application/json"}
-    });
-    if(!resp.ok)throw new Error("Pull failed: "+resp.status);
-    const data=await resp.json();
+    const resp=await fetch(`https://api.github.com/repos/${CLOUD.repo}/contents/data.json`,{headers:ghHeaders()});
+    if(resp.status===404){CLOUD.error="No data.json yet — Push first to create it.";CLOUD.syncing=false;render();return}
+    if(!resp.ok)throw new Error("Pull "+resp.status);
+    const file=await resp.json();
+    CLOUD.sha=file.sha;
+    const decoded=decodeURIComponent(escape(atob(file.content.replace(/\n/g,""))));
+    const data=JSON.parse(decoded);
     if(!data||!data.sites){throw new Error("Invalid cloud data")}
     // Merge sites
     if(data.sites&&Array.isArray(data.sites)){
@@ -813,8 +801,8 @@ function render(){
       if(CLOUD.error)box.appendChild(h("div",{style:{color:"#fca5a5",fontSize:"10px",marginTop:"3px"}},"⚠️ "+CLOUD.error));
 
       // Show Bin ID for sharing
-      box.appendChild(h("div",{style:{marginTop:"8px",padding:"6px 8px",background:"#0f172a",borderRadius:"4px",fontFamily:"monospace",fontSize:"12px",color:"#f59e0b",wordBreak:"break-all",userSelect:"all"}},CLOUD.binId));
-      box.appendChild(h("div",{style:{color:"#64748b",fontSize:"10px",marginTop:"3px"}},"☝️ Share this code with other techs — they paste it below to sync"));
+      box.appendChild(h("div",{style:{marginTop:"8px",padding:"6px 8px",background:"#0f172a",borderRadius:"4px",fontFamily:"monospace",fontSize:"12px",color:"#f59e0b",wordBreak:"break-all",userSelect:"all"}},CLOUD.repo));
+      box.appendChild(h("div",{style:{color:"#64748b",fontSize:"10px",marginTop:"3px"}},"Share your GitHub token with other techs so they can connect"));
 
       const syncBtns=h("div",{style:{display:"flex",gap:"8px",marginTop:"8px"}});
       syncBtns.appendChild(h("button",{className:"btn",style:{padding:"8px 14px",background:CLOUD.syncing?"#334155":"linear-gradient(135deg,#3b82f6,#2563eb)",color:"#fff",fontSize:"12px"},
@@ -825,45 +813,60 @@ function render(){
 
       // Disconnect
       box.appendChild(h("button",{className:"btn",style:{marginTop:"8px",padding:"4px 10px",border:"1px solid #334155",background:"transparent",color:"#64748b",fontSize:"10px"},
-        onClick:()=>{if(confirm("Disconnect cloud sync? Your local data stays.")){CLOUD.binId="";ls("bv_cloud_id",null);render()}}},"Disconnect Cloud"));
+        onClick:()=>{if(confirm("Disconnect cloud sync? Your local data stays.")){CLOUD.token="";CLOUD.repo="";CLOUD.sha="";ls("bv_gh_token",null);ls("bv_gh_repo",null);render()}}},"Disconnect Cloud"));
 
       wrap.appendChild(box);
     }else{
       const box=h("div",{style:{padding:"10px",marginBottom:"10px",borderRadius:"8px",background:"rgba(245,158,11,0.06)",border:"1px solid rgba(245,158,11,0.3)"}});
       box.appendChild(h("div",{style:{color:"#f59e0b",fontSize:"11px",fontWeight:"600",marginBottom:"8px"}},"Not connected — choose one:"));
 
-      // Setup - auto create via jsonblob.com (no signup needed)
-      box.appendChild(h("div",{style:{color:"#e2e8f0",fontSize:"12px",fontWeight:"700",marginBottom:"8px"}},"First tech — create the cloud:"));
+      // Setup - GitHub token based
+      box.appendChild(h("div",{style:{color:"#e2e8f0",fontSize:"12px",fontWeight:"700",marginBottom:"6px"}},"Connect using GitHub:"));
+      box.appendChild(h("div",{style:{color:"#94a3b8",fontSize:"10px",lineHeight:"1.5",marginBottom:"8px"}},
+        "Your data syncs via a file in your GitHub repo. One tech creates a token, shares it with others."));
+
+      // Repo input
+      box.appendChild(h("div",{style:{color:"#94a3b8",fontSize:"10px",marginBottom:"3px"}},"Repository (owner/repo):"));
+      const repoInp=h("input",{type:"text",className:"inp",value:CLOUD.repo||"Erosza/Eros",placeholder:"Erosza/Eros",style:{width:"100%",marginBottom:"8px",fontSize:"13px",fontFamily:"monospace"}});
+
+      // Token input
+      box.appendChild(h("div",{style:{color:"#94a3b8",fontSize:"10px",marginBottom:"3px"}},"GitHub Personal Access Token:"));
+      const tokenInp=h("input",{type:"password",className:"inp",placeholder:"ghp_xxxxxxxxxxxx",style:{width:"100%",marginBottom:"6px",fontSize:"13px",fontFamily:"monospace"}});
+
+      box.appendChild(repoInp);
+      box.appendChild(tokenInp);
+
+      // How to get token link
+      box.appendChild(h("div",{style:{color:"#3b82f6",fontSize:"10px",marginBottom:"10px",cursor:"pointer",textDecoration:"underline"},
+        onClick:()=>{window.open("https://github.com/settings/tokens/new?description=BV+Sorter&scopes=repo","_blank")}},
+        "Click here to create a token on GitHub →"));
 
       box.appendChild(h("button",{className:"btn",style:{width:"100%",padding:"14px",marginBottom:"8px",background:"linear-gradient(135deg,#f59e0b,#d97706)",color:"#000",fontSize:"14px",fontWeight:"800"},
         onClick:async()=>{
-          if(!CLOUD.syncing){
-            await cloudCreate();
-            if(CLOUD.binId){
-              alert("Cloud created!\\n\\nShare this code with your techs:\\n\\n"+CLOUD.binId);
-            }
-          }
-        }},CLOUD.syncing?"⏳ Creating...":"🆕 Create New Cloud"));
+          const token=tokenInp.value.trim();
+          const repo=repoInp.value.trim();
+          if(!token){alert("Paste your GitHub token first");return}
+          if(!repo||!repo.includes("/")){alert("Enter repo as owner/repo, e.g. Erosza/Eros");return}
+          // Test the token
+          CLOUD.syncing=true;CLOUD.error=null;render();
+          try{
+            const resp=await fetch(`https://api.github.com/repos/${repo}`,{headers:{"Authorization":"Bearer "+token,"Accept":"application/vnd.github.v3+json"}});
+            if(!resp.ok)throw new Error("Cannot access repo ("+resp.status+"). Check token has 'repo' scope.");
+            CLOUD.token=token;CLOUD.repo=repo;
+            ls("bv_gh_token",token);ls("bv_gh_repo",repo);
+            CLOUD.syncing=false;
+            // Try initial pull
+            await cloudPull();
+            if(!CLOUD.error)alert("Connected! Push to upload your data, Pull to download.");
+          }catch(e){CLOUD.error=e.message;CLOUD.syncing=false}
+          render();
+        }},CLOUD.syncing?"⏳ Testing...":"🔗 Connect to GitHub"));
 
       if(CLOUD.error){
         box.appendChild(h("div",{style:{padding:"6px 8px",marginBottom:"8px",borderRadius:"4px",background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",color:"#fca5a5",fontSize:"10px",wordBreak:"break-all"}},"⚠️ "+CLOUD.error));
       }
 
-      // Join section
-      box.appendChild(h("div",{style:{color:"#94a3b8",fontSize:"10px",textAlign:"center",marginBottom:"6px"}},"— Paste your code OR a code from another tech —"));
-      const joinInp=h("input",{type:"text",className:"inp",placeholder:"e.g. abc123def456",style:{width:"100%",textAlign:"left",marginBottom:"6px",fontSize:"13px",fontFamily:"monospace"}});
-      const joinBtn=h("button",{className:"btn",style:{width:"100%",padding:"10px",background:"linear-gradient(135deg,#3b82f6,#2563eb)",color:"#fff",fontSize:"12px"},
-        onClick:async()=>{
-          const id=joinInp.value.trim();
-          if(!id){alert("Paste the code first");return}
-          CLOUD.binId=id;ls("bv_cloud_id",id);
-          await cloudPull();
-          if(!CLOUD.error)alert("Connected! You now share data with other techs.");
-        }},"🔗 Join Existing Cloud");
-      box.appendChild(joinInp);
-      box.appendChild(joinBtn);
-
-      box.appendChild(h("div",{style:{color:"#64748b",fontSize:"10px",marginTop:"8px"}},"No signup needed. First tech taps Create, shares the code. Other techs paste it to connect."));
+      box.appendChild(h("div",{style:{color:"#64748b",fontSize:"10px",marginTop:"8px"}},"One tech creates token, shares it. All techs enter same token + repo to sync."));
       wrap.appendChild(box);
     }
 
