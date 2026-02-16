@@ -129,9 +129,35 @@ function gatherCloudData(){
 }
 
 async function cloudCreate(){
-  // npoint.io doesn't support creation via API from browser
-  // Instead, open npoint.io for the user to create manually
-  CLOUD.error="Use the manual steps below to create a cloud bin.";
+  CLOUD.syncing=true;CLOUD.error=null;render();
+  try{
+    const data=gatherCloudData();
+    // Strip signatures to reduce size
+    if(data.jobs){Object.values(data.jobs).forEach(j=>{if(j&&j.data&&j.data.signoff){j.data.signoff={...j.data.signoff};delete j.data.signoff.techSig;delete j.data.signoff.opSig}})}
+    if(data.history){Object.values(data.history).forEach(arr=>{if(Array.isArray(arr))arr.forEach(h=>{if(h&&h.data&&h.data.signoff){h.data.signoff={...h.data.signoff};delete h.data.signoff.techSig;delete h.data.signoff.opSig}})})}
+    const resp=await fetch("https://jsonblob.com/api/jsonBlob",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","Accept":"application/json"},
+      body:JSON.stringify(data)
+    });
+    if(!resp.ok)throw new Error("Create failed: "+resp.status);
+    // Get blob ID from response URL or headers
+    let id="";
+    const loc=resp.headers.get("Location")||"";
+    if(loc)id=loc.split("/").pop();
+    if(!id){const xb=resp.headers.get("x-jsonblob")||"";if(xb)id=xb}
+    if(!id){
+      // Try reading all exposed headers
+      const all=[];resp.headers.forEach((v,k)=>all.push(k+": "+v));
+      // Try to get from response URL
+      if(resp.url)id=resp.url.split("/").pop();
+      if(!id||id==="jsonBlob")throw new Error("No ID returned. Headers: "+all.join(", "));
+    }
+    CLOUD.binId=id;
+    ls("bv_cloud_id",id);
+    CLOUD.lastSync=new Date().toLocaleString("en-GB");
+    ls("bv_cloud_lastsync",CLOUD.lastSync);
+  }catch(e){CLOUD.error=e.message}
   CLOUD.syncing=false;render();
 }
 
@@ -140,31 +166,16 @@ async function cloudPush(){
   CLOUD.syncing=true;CLOUD.error=null;render();
   try{
     const data=gatherCloudData();
-    // Strip large signature images from cloud data to stay under size limits
-    // Signatures stay in localStorage, just not synced
-    if(data.jobs){Object.values(data.jobs).forEach(j=>{
-      if(j&&j.data&&j.data.signoff){
-        j.data.signoff=Object.assign({},j.data.signoff);
-        delete j.data.signoff.techSig;delete j.data.signoff.opSig;
-      }
-    })}
-    if(data.history){Object.values(data.history).forEach(arr=>{
-      if(Array.isArray(arr))arr.forEach(h=>{
-        if(h&&h.data&&h.data.signoff){
-          h.data.signoff=Object.assign({},h.data.signoff);
-          delete h.data.signoff.techSig;delete h.data.signoff.opSig;
-        }
-      });
-    })}
+    // Strip signatures
+    if(data.jobs){Object.values(data.jobs).forEach(j=>{if(j&&j.data&&j.data.signoff){j.data.signoff={...j.data.signoff};delete j.data.signoff.techSig;delete j.data.signoff.opSig}})}
+    if(data.history){Object.values(data.history).forEach(arr=>{if(Array.isArray(arr))arr.forEach(h=>{if(h&&h.data&&h.data.signoff){h.data.signoff={...h.data.signoff};delete h.data.signoff.techSig;delete h.data.signoff.opSig}})})}
     const body=JSON.stringify(data);
-    const sizeKB=Math.round(body.length/1024);
-    // npoint.io uses PUT to update existing bins
-    const resp=await fetch(`https://api.npoint.io/${CLOUD.binId}`,{
+    const resp=await fetch(`https://jsonblob.com/api/jsonBlob/${CLOUD.binId}`,{
       method:"PUT",
-      headers:{"Content-Type":"application/json"},
+      headers:{"Content-Type":"application/json","Accept":"application/json"},
       body:body
     });
-    if(!resp.ok)throw new Error("Push failed: "+resp.status+" ("+sizeKB+"KB)");
+    if(!resp.ok)throw new Error("Push failed: "+resp.status+" ("+Math.round(body.length/1024)+"KB)");
     CLOUD.lastSync=new Date().toLocaleString("en-GB");
     ls("bv_cloud_lastsync",CLOUD.lastSync);
   }catch(e){CLOUD.error="Push: "+e.message}
@@ -175,7 +186,9 @@ async function cloudPull(){
   if(!CLOUD.enabled()||CLOUD.syncing)return;
   CLOUD.syncing=true;CLOUD.error=null;render();
   try{
-    const resp=await fetch(`https://api.npoint.io/${CLOUD.binId}`);
+    const resp=await fetch(`https://jsonblob.com/api/jsonBlob/${CLOUD.binId}`,{
+      headers:{"Accept":"application/json"}
+    });
     if(!resp.ok)throw new Error("Pull failed: "+resp.status);
     const data=await resp.json();
     if(!data||!data.sites){throw new Error("Invalid cloud data")}
@@ -819,23 +832,21 @@ function render(){
       const box=h("div",{style:{padding:"10px",marginBottom:"10px",borderRadius:"8px",background:"rgba(245,158,11,0.06)",border:"1px solid rgba(245,158,11,0.3)"}});
       box.appendChild(h("div",{style:{color:"#f59e0b",fontSize:"11px",fontWeight:"600",marginBottom:"8px"}},"Not connected — choose one:"));
 
-      // Setup instructions
-      box.appendChild(h("div",{style:{color:"#e2e8f0",fontSize:"12px",fontWeight:"700",marginBottom:"6px"}},"First tech — create the cloud (1 minute):"));
-      const steps=h("div",{style:{color:"#94a3b8",fontSize:"11px",lineHeight:"1.6"}});
-      steps.innerHTML="1️⃣ Open <b style='color:#f59e0b'>npoint.io</b> on your phone<br>"+
-        "2️⃣ Paste <b style='color:#f59e0b'>{}</b> in the editor<br>"+
-        "3️⃣ Tap <b style='color:#f59e0b'>Save</b><br>"+
-        "4️⃣ Copy the code from the green URL at the bottom<br>"+
-        "&nbsp;&nbsp;&nbsp;&nbsp;(looks like: <b style='color:#22c55e'>api.npoint.io/abc123def456</b>)<br>"+
-        "5️⃣ Paste ONLY the code part below (the bit after the /)";
-      box.appendChild(steps);
+      // Setup - auto create via jsonblob.com (no signup needed)
+      box.appendChild(h("div",{style:{color:"#e2e8f0",fontSize:"12px",fontWeight:"700",marginBottom:"8px"}},"First tech — create the cloud:"));
 
-      // Open npoint button
-      box.appendChild(h("button",{className:"btn",style:{width:"100%",padding:"12px",marginTop:"8px",marginBottom:"10px",background:"linear-gradient(135deg,#f59e0b,#d97706)",color:"#000",fontSize:"13px",fontWeight:"800"},
-        onClick:()=>{window.open("https://www.npoint.io/docs/empty","_blank")}},"🌐 Open npoint.io"));
+      box.appendChild(h("button",{className:"btn",style:{width:"100%",padding:"14px",marginBottom:"8px",background:"linear-gradient(135deg,#f59e0b,#d97706)",color:"#000",fontSize:"14px",fontWeight:"800"},
+        onClick:async()=>{
+          if(!CLOUD.syncing){
+            await cloudCreate();
+            if(CLOUD.binId){
+              alert("Cloud created!\\n\\nShare this code with your techs:\\n\\n"+CLOUD.binId);
+            }
+          }
+        }},CLOUD.syncing?"⏳ Creating...":"🆕 Create New Cloud"));
 
       if(CLOUD.error){
-        box.appendChild(h("div",{style:{padding:"6px 8px",marginBottom:"8px",borderRadius:"4px",background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",color:"#fca5a5",fontSize:"10px"}},CLOUD.error));
+        box.appendChild(h("div",{style:{padding:"6px 8px",marginBottom:"8px",borderRadius:"4px",background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",color:"#fca5a5",fontSize:"10px",wordBreak:"break-all"}},"⚠️ "+CLOUD.error));
       }
 
       // Join section
@@ -852,7 +863,7 @@ function render(){
       box.appendChild(joinInp);
       box.appendChild(joinBtn);
 
-      box.appendChild(h("div",{style:{color:"#64748b",fontSize:"10px",marginTop:"8px"}},"No signup needed. Takes 1 minute. All techs use the same code to share data."));
+      box.appendChild(h("div",{style:{color:"#64748b",fontSize:"10px",marginTop:"8px"}},"No signup needed. First tech taps Create, shares the code. Other techs paste it to connect."));
       wrap.appendChild(box);
     }
 
