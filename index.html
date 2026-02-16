@@ -1,0 +1,1356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>BV Sorter Extractor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:linear-gradient(145deg,#0a0a1a,#0f1629,#0a0a1a);color:#e2e8f0;font-family:-apple-system,'Segoe UI',system-ui,sans-serif;min-height:100dvh;-webkit-tap-highlight-color:transparent}
+input,textarea,select{outline:none}
+input:focus,textarea:focus,select:focus{border-color:#f59e0b!important}
+@keyframes spin{to{transform:rotate(360deg)}}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:#0f172a}::-webkit-scrollbar-thumb{background:#334155;border-radius:2px}
+.inp{padding:4px 5px;border:1px solid #334155;border-radius:4px;background:#0f172a;color:#e2e8f0;font-size:12px;text-align:center;font-family:monospace}
+.sec{margin-bottom:10px;background:rgba(15,23,42,0.6);border-radius:8px;border:1px solid #1e293b;overflow:hidden}
+.sec-h{padding:6px 10px;background:#1e293b;font-size:11px;font-weight:700;text-transform:uppercase}
+.sec-b{padding:8px 10px}
+.row{display:flex;gap:7px;flex-wrap:wrap;align-items:end;margin-bottom:4px}
+.lbl{color:#94a3b8;font-size:10px;font-weight:600;margin-bottom:2px}
+.btn{border:none;cursor:pointer;font-weight:700;border-radius:8px;display:flex;align-items:center;justify-content:center}
+.card{border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:12px;cursor:pointer}
+.tab{padding:8px 14px;border:none;cursor:pointer;font-size:12px;font-weight:700;border-bottom:2.5px solid transparent;background:transparent}
+.tab.on{background:rgba(245,158,11,0.1);color:#f59e0b;border-bottom-color:#f59e0b}
+.tab.off{color:#64748b}
+.spinner{display:inline-block;width:14px;height:14px;border:2.5px solid rgba(0,0,0,.3);border-top-color:#000;border-radius:50%;animation:spin .6s linear infinite}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+// ===================== CONFIG =====================
+const DEFAULT_SITES=[
+  {id:"squirewood",name:"Squirewood NJK",machines:[{id:"m1",model:"",bvNo:"",mchNo:""}]},
+  {id:"gateway",name:"Gateway NJK",machines:[{id:"m1",model:"",bvNo:"",mchNo:""}]},
+  {id:"gfmining",name:"GF Mining",machines:[{id:"m1",model:"",bvNo:"",mchNo:""}]},
+  {id:"rietput",name:"Rietput",machines:[{id:"m1",model:"",bvNo:"",mchNo:""}]},
+  {id:"thornley",name:"Thornley",machines:[{id:"m1",model:"",bvNo:"",mchNo:""}]},
+  {id:"nelhill",name:"Nelesco Hill",machines:[{id:"m1",model:"",bvNo:"",mchNo:""}]},
+  {id:"nelmain",name:"Nelesco Main",machines:[{id:"m1",model:"",bvNo:"",mchNo:""}]},
+  {id:"endless",name:"Endless Diamonds",machines:[{id:"m1",model:"",bvNo:"",mchNo:""}]},
+  {id:"remhoogte",name:"Remhoogte",machines:[{id:"m1",model:"",bvNo:"",mchNo:""}]},
+  {id:"steyn",name:"Steyn Diamante",machines:[{id:"m1",model:"",bvNo:"",mchNo:""}]},
+  {id:"dfm",name:"DFM Mining",machines:[{id:"m1",model:"",bvNo:"",mchNo:""}]},
+  {id:"astrotail",name:"Astrotail BV",machines:[{id:"m1",model:"",bvNo:"",mchNo:""}]},
+  {id:"hardcore",name:"Hardcore",machines:[{id:"m1",model:"",bvNo:"",mchNo:"",label:"Machine 1"},{id:"m2",model:"",bvNo:"",mchNo:"",label:"Machine 2"}]},
+  {id:"morgenson",name:"Morgenson",machines:[{id:"m1",model:"",bvNo:"",mchNo:""}]},
+  {id:"workshop",name:"Workshop Test",machines:[{id:"m1",model:"",bvNo:"",mchNo:""}]},
+  {id:"njk",name:"NJK",machines:[{id:"m1",model:"",bvNo:"",mchNo:""}]}
+];
+const MODELS=["LS-20-09","LS-OD-50-03N","LS-20-05-2N","LS-20-05-3N"];
+const SCREENS=[
+  {id:"xray",name:"X-ray Tubes",icon:"⚡"},{id:"pmt",name:"PMT Voltages",icon:"🔬"},
+  {id:"detectSC",name:"Detection SC THR",icon:"📡"},{id:"detectFC",name:"Detection FC THR",icon:"📡"},
+  {id:"airref",name:"Air Ref Gain",icon:"🎚️"},{id:"airrec",name:"Air Record",icon:"💨"},
+  {id:"ejSet",name:"Ejector Settings",icon:"💥"},{id:"ejTest",name:"Ejector Test",icon:"🔧"},
+  {id:"reg",name:"Registration",icon:"📋"},
+  {id:"xrayh",name:"X-ray Hours",icon:"⏱️"},
+  {id:"delnote",name:"Delivery Note",icon:"📄"}
+];
+
+// ===================== PROMPT =====================
+const PARAM_PROMPT=`You are reading a Bourevestnik diamond sorter HMI screen photograph. Identify the screen and extract values.
+
+STEP 1 - IDENTIFY by title text:
+- "PHOTOMULTIPLIERS VOLTAGE" = PMT screen (SET/REAL columns, 400-1000V)
+- "DETECTION PARAMETERS" with "SC THR.1" labels = Detection SC THR
+- "DETECTION PARAMETERS" with "FC THR.1" labels = Detection FC THR
+- "X-RAY TUBES" or HV/kV and mA = X-ray Tubes
+- "SET PARAMETERS" with EJECTOR ON TIME = Ejector Settings
+- "MEASURED IN TEST" with EJ duration/response lag = Ejector Test
+- "REGISTRATION" = Registration
+- "AIR REF GAIN" or Gain per channel = Air Ref Gain
+- "AIR RECORD" or Offset/Air(mV) columns = Air Record
+- Tube hours/sorting hours = X-ray Hours
+
+STEP 2 - Return ONLY: {"screenType":"title","v":{...}}
+
+STEP 3 - Keys per screen:
+PMT: pmtSet1-8,pmtReal1-8
+DETECTION SC: scThr1-8,tConvol,convol,tauMin,tauMax,ratioMin,ratioMax,tThresh,thrMode:"SC"
+DETECTION FC: fcThr1-8,tConvol,convol,tauMin,tauMax,ratioMin,ratioMax,tThresh,thrMode:"FC"
+X-RAY TUBES: kv1Set,kv1Real,ma1Set,ma1Real,kv2Set,kv2Real,ma2Set,ma2Real
+EJ SETTINGS: ejOnTime,ejDelayTime,ejActiveDelay,ejWashActive,ejWash12
+EJ TEST: ejDuration1-5,ejLag1-5 (only visible channels)
+REGISTRATION: regBlockingTime
+AIR REF GAIN: airGain1-8
+AIR RECORD: airOffset1-8,airMv1-8
+X-RAY HOURS: xrayHrsHv1,xrayHrsTube1,xrayHrsHv2,xrayHrsTube2,xrayHrsGate
+
+CRITICAL: PMT SET/REAL are voltages (400-1000V). SC/FC THR are detection thresholds. Different screens. Read title FIRST.`;
+
+const DELNOTE_PROMPT=`Extract from this delivery note photo. Return ONLY JSON: {"noteNumber":"string","parts":[{"item":"string","qty":"string"}]}`;
+
+// ===================== STATE =====================
+const S={
+  phase:"site",sites:JSON.parse(JSON.stringify(DEFAULT_SITES)),
+  selSite:null,selMach:null,data:null,nCh:4,
+  screenSts:{},err:null,log:"",jobMetas:{},prevJob:null,
+  techName:ls("bv_tech")||"",apiKey:ls("bv_key")||"",
+  signoff:{techName:"",techSig:null,opName:"",opSig:null,dateTime:"",signed:false}
+};
+function ls(k,v){try{if(v===undefined)return localStorage.getItem(k);if(v===null)localStorage.removeItem(k);else localStorage.setItem(k,v)}catch(e){return null}}
+function dc(o){return JSON.parse(JSON.stringify(o))}
+
+// ===================== CLOUD SYNC (zero signup) =====================
+// Uses jsonbin-zeta.vercel.app — no account needed.
+// First tech taps "Create Cloud" → gets a Bin ID → shares with other techs.
+// All techs enter same Bin ID → shared data.
+
+const CLOUD={
+  binId:ls("bv_cloud_id")||"",
+  syncing:false,
+  lastSync:ls("bv_cloud_lastsync")||"",
+  error:null,
+  enabled(){return!!this.binId}
+};
+
+function gatherCloudData(){
+  const data={sites:S.sites,jobs:{},history:{},_ts:new Date().toISOString(),_tech:S.techName||"Unknown"};
+  for(let i=0;i<localStorage.length;i++){
+    const k=localStorage.key(i);
+    if(k.startsWith("bv_job_")){try{data.jobs[k]=JSON.parse(localStorage.getItem(k))}catch(e){}}
+    if(k.startsWith("bv_hist_")){try{data.history[k]=JSON.parse(localStorage.getItem(k))}catch(e){}}
+  }
+  return data;
+}
+
+async function cloudCreate(){
+  // npoint.io doesn't support creation via API from browser
+  // Instead, open npoint.io for the user to create manually
+  CLOUD.error="Use the manual steps below to create a cloud bin.";
+  CLOUD.syncing=false;render();
+}
+
+async function cloudPush(){
+  if(!CLOUD.enabled()||CLOUD.syncing)return;
+  CLOUD.syncing=true;CLOUD.error=null;render();
+  try{
+    const data=gatherCloudData();
+    // Strip large signature images from cloud data to stay under size limits
+    // Signatures stay in localStorage, just not synced
+    if(data.jobs){Object.values(data.jobs).forEach(j=>{
+      if(j&&j.data&&j.data.signoff){
+        j.data.signoff=Object.assign({},j.data.signoff);
+        delete j.data.signoff.techSig;delete j.data.signoff.opSig;
+      }
+    })}
+    if(data.history){Object.values(data.history).forEach(arr=>{
+      if(Array.isArray(arr))arr.forEach(h=>{
+        if(h&&h.data&&h.data.signoff){
+          h.data.signoff=Object.assign({},h.data.signoff);
+          delete h.data.signoff.techSig;delete h.data.signoff.opSig;
+        }
+      });
+    })}
+    const body=JSON.stringify(data);
+    const sizeKB=Math.round(body.length/1024);
+    // npoint.io uses PUT to update existing bins
+    const resp=await fetch(`https://api.npoint.io/${CLOUD.binId}`,{
+      method:"PUT",
+      headers:{"Content-Type":"application/json"},
+      body:body
+    });
+    if(!resp.ok)throw new Error("Push failed: "+resp.status+" ("+sizeKB+"KB)");
+    CLOUD.lastSync=new Date().toLocaleString("en-GB");
+    ls("bv_cloud_lastsync",CLOUD.lastSync);
+  }catch(e){CLOUD.error="Push: "+e.message}
+  CLOUD.syncing=false;render();
+}
+
+async function cloudPull(){
+  if(!CLOUD.enabled()||CLOUD.syncing)return;
+  CLOUD.syncing=true;CLOUD.error=null;render();
+  try{
+    const resp=await fetch(`https://api.npoint.io/${CLOUD.binId}`);
+    if(!resp.ok)throw new Error("Pull failed: "+resp.status);
+    const data=await resp.json();
+    if(!data||!data.sites){throw new Error("Invalid cloud data")}
+    // Merge sites
+    if(data.sites&&Array.isArray(data.sites)){
+      const existIds=new Set(S.sites.map(s=>s.id));
+      data.sites.forEach(imp=>{
+        const exist=S.sites.find(s=>s.id===imp.id);
+        if(exist){imp.machines.forEach(im=>{
+          const em=exist.machines.find(m=>m.id===im.id);
+          if(em){if(im.model)em.model=im.model;if(im.bvNo)em.bvNo=im.bvNo;if(im.mchNo)em.mchNo=im.mchNo}
+        })}
+      });
+      const newSites=data.sites.filter(s=>!existIds.has(s.id));
+      S.sites=[...S.sites,...newSites];
+      saveSites(S.sites);
+    }
+    // Merge jobs (newer wins)
+    if(data.jobs){Object.entries(data.jobs).forEach(([k,v])=>{
+      const existing=ls(k);
+      if(existing){try{const ex=JSON.parse(existing);if(new Date(v.date)>new Date(ex.date))ls(k,JSON.stringify(v))}catch(e){ls(k,JSON.stringify(v))}}
+      else ls(k,JSON.stringify(v));
+    })}
+    // Merge history
+    if(data.history){Object.entries(data.history).forEach(([k,v])=>{
+      let existing=[];try{const e=ls(k);if(e)existing=JSON.parse(e)}catch(e){}
+      const merged=[...v,...existing];
+      const seen=new Set();const unique=[];
+      merged.forEach(h=>{const key=`${h.dateStr}_${h.tech}`;if(!seen.has(key)){seen.add(key);unique.push(h)}});
+      unique.sort((a,b)=>new Date(b.date)-new Date(a.date));
+      ls(k,JSON.stringify(unique.slice(0,20)));
+    })}
+    // Refresh metas
+    S.sites.forEach(site=>site.machines.forEach(m=>{
+      const meta=loadJobMeta(site.id,m.id);
+      if(meta)S.jobMetas[`${site.id}:${m.id}`]=meta;
+    }));
+    CLOUD.lastSync=new Date().toLocaleString("en-GB");
+    ls("bv_cloud_lastsync",CLOUD.lastSync);
+  }catch(e){CLOUD.error="Pull: "+e.message}
+  CLOUD.syncing=false;render();
+}
+
+// Auto-pull on startup
+setTimeout(()=>{if(CLOUD.enabled())cloudPull()},500);
+
+// Init screen statuses
+SCREENS.forEach(s=>S.screenSts[s.id]="pending");
+
+// ===================== TEMPLATE =====================
+function tmpl(n){
+  const a=i=>Array.from({length:i},(_,j)=>j);
+  return{header:{machineType:"",customer:"",mchNo:"",date:new Date().toLocaleDateString("en-GB"),bvNo:""},
+    airRecord:a(n).map(i=>({ch:i+1,offset:"",airMv:""})),
+    pmtVoltages:a(n).map(i=>({ch:i+1,set:"",real:""})),
+    airRefGain:a(n).map(i=>({ch:i+1,gain:""})),
+    det:{scThr:a(n).map(()=>""),fcThr:a(n).map(()=>""),tConvol:"",convol:"",tauMin:"",tauMax:"",ratioMin:"",ratioMax:"",tThresh:""},
+    xray:{kv1:"",ma1:"",kv1R:"",ma1R:"",kv2:"",ma2:"",kv2R:"",ma2R:""},
+    xrayH:{hv1:"",tr1:"",hv2:"",tr2:"",gate:""},
+    ej:{onTime:"",delayTime:"",activeDly:"",washTime:"",wash12:""},
+    ejMs:{tOpen:{ch1:"",ch2:"",ch3:"",ch4:"",ch5:""},tRet:{ch1:"",ch2:"",ch3:"",ch4:"",ch5:""}},
+    gate:{maxLum:"",pauseLum:"",tput:"",matClass:""},reg:{blockTime:""},
+    pcs:{tag:"",baud:"",mode:""},notes:"",spares:"",tech:"",delNote:"",km:""};
+}
+
+// ===================== STORAGE =====================
+function loadSites(){try{const s=ls("bv_sites");return s?JSON.parse(s):null}catch(e){return null}}
+function saveSites(sites){ls("bv_sites",JSON.stringify(sites))}
+function saveJob(siteId,machId,data,tech){
+  const key=`bv_job_${siteId}_${machId}`;
+  const hKey=`bv_hist_${siteId}_${machId}`;
+  const entry={data,tech:tech||"Unknown",date:new Date().toISOString(),dateStr:new Date().toLocaleDateString("en-GB")};
+  ls(key,JSON.stringify(entry));
+  let hist=[];try{const h=ls(hKey);if(h)hist=JSON.parse(h)}catch(e){}
+  hist.unshift(entry);if(hist.length>20)hist=hist.slice(0,20);
+  ls(hKey,JSON.stringify(hist));
+}
+function loadJob(siteId,machId){try{const r=ls(`bv_job_${siteId}_${machId}`);return r?JSON.parse(r):null}catch(e){return null}}
+function loadHistory(siteId,machId){try{const r=ls(`bv_hist_${siteId}_${machId}`);return r?JSON.parse(r):[]}catch(e){return[]}}
+function loadJobMeta(siteId,machId){const j=loadJob(siteId,machId);return j?{tech:j.tech,dateStr:j.dateStr}:null}
+
+// Init sites
+(function(){
+  const saved=loadSites();
+  if(saved&&saved.length){
+    const ids=new Set(saved.map(s=>s.id));
+    S.sites=[...saved,...DEFAULT_SITES.filter(d=>!ids.has(d.id))];
+  }
+  saveSites(S.sites);
+  S.sites.forEach(site=>site.machines.forEach(m=>{
+    const meta=loadJobMeta(site.id,m.id);
+    if(meta)S.jobMetas[`${site.id}:${m.id}`]=meta;
+  }));
+})();
+
+// ===================== MERGE & DETECT =====================
+function merge(cur,v){
+  if(!v)return cur;const d=dc(cur);const str=x=>x!=null?String(x):"";
+  const t=(p,x)=>{if(x==null)return;const k=p.split(".");let o=d;for(let i=0;i<k.length-1;i++)o=o[k[i]];o[k[k.length-1]]=str(x)};
+  t("xray.kv1",v.kv1Set);t("xray.kv1R",v.kv1Real);t("xray.ma1",v.ma1Set);t("xray.ma1R",v.ma1Real);
+  t("xray.kv2",v.kv2Set);t("xray.kv2R",v.kv2Real);t("xray.ma2",v.ma2Set);t("xray.ma2R",v.ma2Real);
+  t("ej.onTime",v.ejOnTime);t("ej.delayTime",v.ejDelayTime);t("ej.activeDly",v.ejActiveDelay);t("ej.washTime",v.ejWashActive);t("ej.wash12",v.ejWash12);
+  ["ch1","ch2","ch3","ch4","ch5"].forEach((c,i)=>{
+    if(v[`ejDuration${i+1}`]!=null)d.ejMs.tOpen[c]=str(v[`ejDuration${i+1}`]);
+    if(v[`ejLag${i+1}`]!=null)d.ejMs.tRet[c]=str(v[`ejLag${i+1}`]);
+  });
+  t("gate.maxLum",v.gateMaxLum);t("gate.pauseLum",v.gatePauseLum);t("gate.tput",v.gateThroughput);t("gate.matClass",v.gateMaterialClass);
+  t("reg.blockTime",v.regBlockingTime);
+  t("det.tConvol",v.tConvol);t("det.convol",v.convol);
+  t("det.tauMin",v.tauMin);t("det.tauMax",v.tauMax);t("det.ratioMin",v.ratioMin);t("det.ratioMax",v.ratioMax);t("det.tThresh",v.tThresh);
+  t("xrayH.hv1",v.xrayHrsHv1);t("xrayH.tr1",v.xrayHrsTube1);t("xrayH.hv2",v.xrayHrsHv2);t("xrayH.tr2",v.xrayHrsTube2);t("xrayH.gate",v.xrayHrsGate);
+  t("pcs.tag",v.pcsTag);t("pcs.baud",v.pcsBaud);t("pcs.mode",v.pcsMode);
+  for(let i=0;i<8;i++){
+    while(i>=d.det.scThr.length){d.det.scThr.push("");d.det.fcThr.push("")}
+    while(i>=d.pmtVoltages.length)d.pmtVoltages.push({ch:d.pmtVoltages.length+1,set:"",real:""});
+    while(i>=d.airRefGain.length)d.airRefGain.push({ch:d.airRefGain.length+1,gain:""});
+    while(i>=d.airRecord.length)d.airRecord.push({ch:d.airRecord.length+1,offset:"",airMv:""});
+    if(v[`scThr${i+1}`]!=null)d.det.scThr[i]=str(v[`scThr${i+1}`]);
+    if(v[`fcThr${i+1}`]!=null)d.det.fcThr[i]=str(v[`fcThr${i+1}`]);
+    if(v[`pmtSet${i+1}`]!=null)d.pmtVoltages[i].set=str(v[`pmtSet${i+1}`]);
+    if(v[`pmtReal${i+1}`]!=null)d.pmtVoltages[i].real=str(v[`pmtReal${i+1}`]);
+    if(v[`airGain${i+1}`]!=null)d.airRefGain[i].gain=str(v[`airGain${i+1}`]);
+    if(v[`airOffset${i+1}`]!=null)d.airRecord[i].offset=str(v[`airOffset${i+1}`]);
+    if(v[`airMv${i+1}`]!=null)d.airRecord[i].airMv=str(v[`airMv${i+1}`]);
+  }
+  return d;
+}
+function detectScr(v){
+  if(!v)return null;
+  if(v.pmtSet1!=null||v.pmtReal1!=null)return"pmt";
+  if(v.scThr1!=null||v.thrMode==="SC")return"detectSC";
+  if(v.fcThr1!=null||v.thrMode==="FC")return"detectFC";
+  if(v.tConvol!=null&&v.scThr1==null&&v.fcThr1==null)return"detectSC";
+  if(v.kv1Set!=null||v.ma1Set!=null)return"xray";
+  if(v.airGain1!=null)return"airref";
+  if(v.airOffset1!=null||v.airMv1!=null)return"airrec";
+  if(v.ejOnTime!=null||v.ejDelayTime!=null)return"ejSet";
+  if(v.ejDuration1!=null||v.ejLag1!=null)return"ejTest";
+  if(v.gateMaxLum!=null)return"gate";
+  if(v.regBlockingTime!=null)return"reg";
+  if(v.xrayHrsHv1!=null||v.xrayHrsGate!=null)return"xrayh";
+  if(v.pcsTag!=null)return"pcs";
+  return null;
+}
+
+// ===================== COMPRESS =====================
+function compress(file){return new Promise((res,rej)=>{
+  const r=new FileReader();r.onerror=()=>rej(new Error("Read"));
+  r.onload=()=>{const img=new Image();img.onload=()=>{
+    let w=img.width,h=img.height;const m=1600;
+    if(w>m||h>m){const s=m/Math.max(w,h);w=Math.round(w*s);h=Math.round(h*s)}
+    const c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(img,0,0,w,h);
+    let q=0.85,d=c.toDataURL("image/jpeg",q);
+    while(d.length*3/4>4e6&&q>0.3){q-=0.1;d=c.toDataURL("image/jpeg",q)}
+    res(d.split(",")[1])};img.onerror=()=>rej(new Error("Decode"));img.src=r.result};r.readAsDataURL(file)})}
+
+// ===================== API =====================
+async function callAPI(b64,prompt){
+  if(!S.apiKey){S.err="Set API key in ⚙️ Settings";render();return null}
+  const resp=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",
+    headers:{"Content-Type":"application/json","x-api-key":S.apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+    body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:4000,
+      messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},{type:"text",text:prompt}]}]})});
+  if(!resp.ok){const t=await resp.text();throw new Error(`HTTP ${resp.status}: ${t.slice(0,150)}`)}
+  const j=await resp.json();if(j.error)throw new Error(j.error.message);
+  let txt=(j.content||[]).map(c=>c.text||"").join("");
+  // Strip markdown fences
+  txt=txt.replace(/```json\s*/g,"").replace(/```\s*/g,"").trim();
+  // Extract JSON object even if there's preamble text
+  const jsonMatch=txt.match(/\{[\s\S]*\}/);
+  if(!jsonMatch)throw new Error("No JSON found in response: "+txt.slice(0,100));
+  return JSON.parse(jsonMatch[0]);
+}
+
+// ===================== PROCESS IMAGE =====================
+async function processImage(file,screenId){
+  S.screenSts[screenId]="processing";S.err=null;render();
+  S.log+=`\n${screenId}: compressing...`;render();
+  try{
+    const b64=await compress(file);
+    S.log+=`\n${screenId}: ~${Math.round(b64.length*3/4/1024)}KB → API...`;render();
+    const isDel=screenId==="delnote";
+    const parsed=await callAPI(b64,isDel?DELNOTE_PROMPT:PARAM_PROMPT);
+    if(!parsed){S.screenSts[screenId]="error";render();return}
+    if(isDel){
+      if(parsed.noteNumber)S.data.delNote=parsed.noteNumber;
+      if(parsed.parts&&parsed.parts.length){
+        const pl=parsed.parts.map(p=>`${p.qty||"1"}x ${p.item}`).join("\n");
+        S.data.spares=S.data.spares?(S.data.spares+"\n"+pl):pl;
+      }
+      S.screenSts.delnote="done";
+      S.log+=`\n${screenId}: ✓ Note#${parsed.noteNumber||"?"}, ${(parsed.parts||[]).length} parts`;
+    }else{
+      S.data=merge(S.data,parsed.v);
+      const detCh=Math.max(S.data.pmtVoltages.length,S.data.airRecord.length);
+      if(detCh>S.nCh)S.nCh=detCh;
+      const det=detectScr(parsed.v);
+      S.screenSts[det||screenId]="done";
+      S.log+=`\n${screenId}: ✓ ${parsed.screenType||det||"ok"}`;
+    }
+  }catch(e){
+    S.screenSts[screenId]="error";S.err=e.message;
+    S.log+=`\n${screenId}: ✗ ${e.message}`;
+  }
+  render();
+}
+
+// ===================== SAVE/EXPORT =====================
+function saveMachineDetails(){
+  if(!S.selSite||!S.selMach)return;
+  const site=S.sites.find(s=>s.id===S.selSite.id);
+  if(site){const m=site.machines.find(x=>x.id===S.selMach.id);
+    if(m){m.model=S.data.header.machineType;m.bvNo=S.data.header.bvNo;m.mchNo=S.data.header.mchNo}}
+  saveSites(S.sites);
+  const tech=S.data.tech||S.techName||"Unknown";
+  saveJob(S.selSite.id,S.selMach.id,S.data,tech);
+  S.jobMetas[`${S.selSite.id}:${S.selMach.id}`]={tech,dateStr:new Date().toLocaleDateString("en-GB")};
+  if(S.data.tech){S.techName=S.data.tech;ls("bv_tech",S.data.tech)}
+  render();
+  if(CLOUD.enabled())cloudPush();
+}
+
+function toCSV(){
+  const d=S.data,model=d.header.machineType||"";
+  let c="BOUREVESTNIK SORTER PARAMETER REPORT\n\n";
+  c+=`Model,${model}\nCustomer,${d.header.customer}\nMCH No,${d.header.mchNo}\nBV No,${d.header.bvNo}\nDate,${d.header.date}\n\n`;
+  c+="AIR RECORD\nCH,OFFSET,Air(mV)\n";d.airRecord.forEach(r=>c+=`${r.ch},${r.offset},${r.airMv}\n`);
+  c+="\nPMT VOLTAGES\nCH,SET,REAL\n";d.pmtVoltages.forEach(r=>c+=`${r.ch},${r.set},${r.real}\n`);
+  c+="\nAIR REF GAIN\nCH,Gain\n";d.airRefGain.forEach(r=>c+=`${r.ch},${r.gain}\n`);
+  c+="\nDETECTION\nCH,SC THR,FC THR\n";for(let i=0;i<d.det.scThr.length;i++)c+=`${i+1},${d.det.scThr[i]},${d.det.fcThr[i]}\n`;
+  c+=`T Convol,${d.det.tConvol}\nConvol,${d.det.convol}\nTau Min,${d.det.tauMin}\nTau Max,${d.det.tauMax}\nRatio Min,${d.det.ratioMin}\nRatio Max,${d.det.ratioMax}\nT Thresh,${d.det.tThresh}\n`;
+  c+=`\nX-RAY\nHV1 SET,${d.xray.kv1}\nHV1 REAL,${d.xray.kv1R}\nmA1 SET,${d.xray.ma1}\nmA1 REAL,${d.xray.ma1R}\nHV2 SET,${d.xray.kv2}\nHV2 REAL,${d.xray.kv2R}\nmA2 SET,${d.xray.ma2}\nmA2 REAL,${d.xray.ma2R}\n`;
+  c+=`\nX-RAY HRS\nHV1,${d.xrayH.hv1}\nTube1,${d.xrayH.tr1}\nHV2,${d.xrayH.hv2}\nTube2,${d.xrayH.tr2}\nGate,${d.xrayH.gate}\n`;
+  c+=`\nEJECTOR SETTINGS\nOn,${d.ej.onTime}\nDelay,${d.ej.delayTime}\nActDly,${d.ej.activeDly}\nWash,${d.ej.washTime}\nW12,${d.ej.wash12}\n`;
+  c+=`\nEJECTOR TEST\n,EJ1,EJ2,EJ3,EJ4,EJ5\nDuration,${d.ejMs.tOpen.ch1},${d.ejMs.tOpen.ch2},${d.ejMs.tOpen.ch3},${d.ejMs.tOpen.ch4},${d.ejMs.tOpen.ch5}\nResp Lag,${d.ejMs.tRet.ch1},${d.ejMs.tRet.ch2},${d.ejMs.tRet.ch3},${d.ejMs.tRet.ch4},${d.ejMs.tRet.ch5}\n`;
+  c+=`\nREG\nBlock,${d.reg.blockTime}\n`;
+  c+=`\nDel Note,${d.delNote}\nSpares,"${(d.spares||"").replace(/"/g,'""')}"\nTech,${d.tech}\nKM,${d.km}\nNotes,"${(d.notes||"").replace(/"/g,'""')}"\n`;
+  const b=new Blob([c],{type:"text/csv"});const u=URL.createObjectURL(b);
+  const a=document.createElement("a");a.href=u;a.download=`${d.header.customer||"sorter"}_${d.header.date||"export"}.csv`;a.click();URL.revokeObjectURL(u);
+}
+
+function exportSiteExcel(site){
+  const wb=XLSX.utils.book_new();
+  let allVisits=[];
+  site.machines.forEach(m=>{
+    const hist=loadHistory(site.id,m.id);
+    hist.forEach(h=>allVisits.push({...h,machLabel:m.label||m.id}));
+  });
+  if(!allVisits.length){
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([["No history for "+site.name]]),"Summary");
+  }else{
+    const summ=[["Service History: "+site.name],[""],["Date","Technician","Machine","Model","BV No","Del Note"]];
+    allVisits.forEach(v=>{const d=v.data;summ.push([v.dateStr,v.tech,v.machLabel,d?.header?.machineType||"",d?.header?.bvNo||"",d?.delNote||""])});
+    const ws=XLSX.utils.aoa_to_sheet(summ);ws["!cols"]=[{wch:12},{wch:14},{wch:12},{wch:14},{wch:10},{wch:14}];
+    XLSX.utils.book_append_sheet(wb,ws,"Summary");
+    allVisits.forEach(v=>{
+      const d=v.data;if(!d)return;
+      let tab=`${v.dateStr}_${v.tech}`.replace(/[\/\\?*\[\]]/g,"-").slice(0,28);
+      const rows=[];const add=(l,val)=>rows.push([l,val||""]);const blank=()=>rows.push([]);
+      rows.push(["SERVICE REPORT: "+site.name]);blank();
+      add("Date",v.dateStr);add("Technician",v.tech);add("Model",d.header?.machineType);add("BV No",d.header?.bvNo);add("MCH No",d.header?.mchNo);add("Delivery Note",d.delNote);blank();
+      rows.push(["AIR RECORD"]);rows.push(["CH","OFFSET","Air(mV)"]);
+      (d.airRecord||[]).forEach(r=>rows.push([r.ch,r.offset,r.airMv]));blank();
+      rows.push(["PMT VOLTAGES"]);rows.push(["CH","SET","REAL"]);
+      (d.pmtVoltages||[]).forEach(r=>rows.push([r.ch,r.set,r.real]));blank();
+      rows.push(["AIR REF GAIN"]);rows.push(["CH","Gain"]);
+      (d.airRefGain||[]).forEach(r=>rows.push([r.ch,r.gain]));blank();
+      rows.push(["DETECTION"]);rows.push(["CH","SC THR","FC THR"]);
+      const det=d.det||{};const nCh=Math.max((det.scThr||[]).length,(det.fcThr||[]).length);
+      for(let i=0;i<nCh;i++)rows.push([i+1,(det.scThr||[])[i]||"",(det.fcThr||[])[i]||""]);
+      add("T Convol",det.tConvol);add("Convol",det.convol);add("Tau Min",det.tauMin);add("Tau Max",det.tauMax);
+      add("Ratio Min",det.ratioMin);add("Ratio Max",det.ratioMax);add("T Thresh",det.tThresh);blank();
+      rows.push(["X-RAY TUBES"]);const x=d.xray||{};
+      add("HV1 SET",x.kv1);add("HV1 REAL",x.kv1R);add("mA1 SET",x.ma1);add("mA1 REAL",x.ma1R);
+      add("HV2 SET",x.kv2);add("HV2 REAL",x.kv2R);add("mA2 SET",x.ma2);add("mA2 REAL",x.ma2R);blank();
+      rows.push(["X-RAY HOURS"]);const xh=d.xrayH||{};
+      add("HV1",xh.hv1);add("Tube1",xh.tr1);add("HV2",xh.hv2);add("Tube2",xh.tr2);add("Gate",xh.gate);blank();
+      rows.push(["EJECTOR SETTINGS"]);const ej=d.ej||{};
+      add("On Time",ej.onTime);add("Delay",ej.delayTime);add("Active Delay",ej.activeDly);add("Wash",ej.washTime);add("1or2",ej.wash12);blank();
+      rows.push(["EJECTOR TEST"]);rows.push(["","EJ1","EJ2","EJ3","EJ4","EJ5"]);
+      const em=d.ejMs||{tOpen:{},tRet:{}};
+      rows.push(["Duration",em.tOpen.ch1,em.tOpen.ch2,em.tOpen.ch3,em.tOpen.ch4,em.tOpen.ch5]);
+      rows.push(["Resp Lag",em.tRet.ch1,em.tRet.ch2,em.tRet.ch3,em.tRet.ch4,em.tRet.ch5]);blank();
+      add("REGISTRATION","");add("Block(ms)",(d.reg||{}).blockTime);blank();
+      add("Spares",d.spares);add("Notes",d.notes);add("KM",d.km);
+      // Sign-off
+      if(d.signoff){blank();rows.push(["SIGN-OFF"]);
+        add("Date/Time",d.signoff.dateTime);add("Technician",d.signoff.techName);add("Operator",d.signoff.opName)}
+      const ws2=XLSX.utils.aoa_to_sheet(rows);ws2["!cols"]=[{wch:18},{wch:14},{wch:10},{wch:8}];
+      let fn=tab;let c=1;while(wb.SheetNames.includes(fn)){fn=tab.slice(0,25)+`(${++c})`}
+      XLSX.utils.book_append_sheet(wb,ws2,fn);
+    });
+  }
+  XLSX.writeFile(wb,`${site.name.replace(/[^a-zA-Z0-9 ]/g,"")}_History.xlsx`);
+}
+
+function exportSitesJSON(){
+  const b=new Blob([JSON.stringify(S.sites,null,2)],{type:"application/json"});
+  const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download="sorter_sites.json";a.click();URL.revokeObjectURL(u);
+}
+
+// Full data export: sites + all jobs + all history in one file
+function exportAllData(){
+  const data={sites:S.sites,jobs:{},history:{}};
+  // Gather all bv_ keys from localStorage
+  for(let i=0;i<localStorage.length;i++){
+    const k=localStorage.key(i);
+    if(k.startsWith("bv_job_")){try{data.jobs[k]=JSON.parse(localStorage.getItem(k))}catch(e){}}
+    if(k.startsWith("bv_hist_")){try{data.history[k]=JSON.parse(localStorage.getItem(k))}catch(e){}}
+  }
+  const b=new Blob([JSON.stringify(data)],{type:"application/json"});
+  const u=URL.createObjectURL(b);const a=document.createElement("a");
+  a.href=u;a.download=`BV_FullBackup_${new Date().toLocaleDateString("en-GB").replace(/\//g,"-")}.json`;
+  a.click();URL.revokeObjectURL(u);
+}
+
+// Full data import: merges sites + jobs + history
+function importAllData(jsonStr){
+  try{
+    const data=JSON.parse(jsonStr);
+    // Import sites (merge: keep existing details, add new sites)
+    if(data.sites&&Array.isArray(data.sites)){
+      const existIds=new Set(S.sites.map(s=>s.id));
+      // Update existing sites with imported machine details
+      data.sites.forEach(imp=>{
+        const exist=S.sites.find(s=>s.id===imp.id);
+        if(exist){
+          imp.machines.forEach(im=>{
+            const em=exist.machines.find(m=>m.id===im.id);
+            if(em){if(im.model&&!em.model)em.model=im.model;if(im.bvNo&&!em.bvNo)em.bvNo=im.bvNo;if(im.mchNo&&!em.mchNo)em.mchNo=im.mchNo}
+          });
+        }
+      });
+      // Add new sites
+      const newSites=data.sites.filter(s=>!existIds.has(s.id));
+      S.sites=[...S.sites,...newSites];
+      saveSites(S.sites);
+    }
+    // Import jobs (newer wins)
+    if(data.jobs){Object.entries(data.jobs).forEach(([k,v])=>{
+      const existing=ls(k);
+      if(existing){try{const ex=JSON.parse(existing);if(new Date(v.date)>new Date(ex.date))ls(k,JSON.stringify(v))}catch(e){ls(k,JSON.stringify(v))}}
+      else ls(k,JSON.stringify(v));
+    })}
+    // Import history (merge, keep latest 20, deduplicate by date)
+    if(data.history){Object.entries(data.history).forEach(([k,v])=>{
+      let existing=[];try{const e=ls(k);if(e)existing=JSON.parse(e)}catch(e){}
+      const merged=[...v,...existing];
+      // Deduplicate by date string
+      const seen=new Set();const unique=[];
+      merged.forEach(h=>{const key=`${h.dateStr}_${h.tech}`;if(!seen.has(key)){seen.add(key);unique.push(h)}});
+      unique.sort((a,b)=>new Date(b.date)-new Date(a.date));
+      ls(k,JSON.stringify(unique.slice(0,20)));
+    })}
+    // Refresh metas
+    S.sites.forEach(site=>site.machines.forEach(m=>{
+      const meta=loadJobMeta(site.id,m.id);
+      if(meta)S.jobMetas[`${site.id}:${m.id}`]=meta;
+    }));
+    S.err=null;
+    render();
+    if(CLOUD.enabled())cloudPush();
+    return true;
+  }catch(e){S.err="Invalid backup file: "+e.message;render();return false}
+}
+
+// ===================== ACTIONS =====================
+
+// Generate uneditable report image (PNG) for WhatsApp
+function generateReportImage(){
+  const d=S.data;const so=S.signoff;if(!d||!so.signed)return;
+  const W=800,LM=24,RW=W-2*LM;
+  let y=0;
+  const estH=2200;
+  const c=document.createElement("canvas");c.width=W;c.height=estH;
+  const ctx=c.getContext("2d");
+  ctx.fillStyle="#fff";ctx.fillRect(0,0,W,estH);
+
+  function text(t,x,yp,size,color,bold,align){
+    ctx.fillStyle=color||"#000";ctx.font=(bold?"bold ":"")+size+"px Arial";
+    ctx.textAlign=align||"left";ctx.fillText(t||"",x,yp);ctx.textAlign="left";
+  }
+  function hline(y2,x1,x2){ctx.strokeStyle="#ccc";ctx.lineWidth=0.5;ctx.beginPath();ctx.moveTo(x1||LM,y2);ctx.lineTo(x2||(W-LM),y2);ctx.stroke()}
+  function thickLine(y2){ctx.strokeStyle="#d97706";ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(LM,y2);ctx.lineTo(W-LM,y2);ctx.stroke()}
+  function sectionTitle(t){y+=24;text(t,W/2,y,13,"#d97706",true,"center");y+=6;thickLine(y);y+=8}
+
+  // ===== HEADER =====
+  y=10;ctx.fillStyle="#d97706";ctx.fillRect(0,0,W,4);
+  y=32;text("BOUREVESTNIK SERVICE REPORT",W/2,y,18,"#000",true,"center");
+  y+=18;text("SIGNED & VERIFIED",W/2,y,10,"#22863a",true,"center");
+  y+=16;hline(y);y+=14;
+
+  // Machine info - two columns
+  const mi=d.header;
+  const infoL=[["Customer",mi.customer],["Model",mi.machineType],["BV No",mi.bvNo]];
+  const infoR=[["MCH No",mi.mchNo],["Date",mi.date],["Technician",d.tech||so.techName]];
+  infoL.forEach((r,i)=>{
+    text(r[0]+":",LM,y,10,"#888",true);text(r[1]||"-",LM+70,y,11,"#000");
+    text(infoR[i][0]+":",W/2+20,y,10,"#888",true);text(infoR[i][1]||"-",W/2+90,y,11,"#000");
+    y+=16;
+  });
+  y+=4;
+
+  // ===== PMT VALUES - combined table =====
+  sectionTitle("PMT VALUES");
+  const cols=["CH","Real","Set","SC THR","FC THR","Gain","Offset","Air mV"];
+  const colW=[40,75,75,75,75,65,80,80];
+  let cx=LM+(RW-colW.reduce((a,b)=>a+b,0))/2;
+
+  ctx.fillStyle="#f5f5f0";ctx.fillRect(cx,y,colW.reduce((a,b)=>a+b,0),18);
+  let tx=cx;
+  cols.forEach((c2,i)=>{text(c2,tx+colW[i]/2,y+13,9,"#666",true,"center");tx+=colW[i]});
+  y+=18;hline(y,cx,cx+colW.reduce((a,b)=>a+b,0));
+
+  const nCh=d.pmtVoltages.length;
+  for(let i=0;i<nCh;i++){
+    y+=16;
+    if(i%2===0){ctx.fillStyle="#fafaf8";ctx.fillRect(cx,y-12,colW.reduce((a,b)=>a+b,0),16)}
+    const vals=[String(i+1),d.pmtVoltages[i]?.real||"",d.pmtVoltages[i]?.set||"",
+      d.det.scThr[i]||"",d.det.fcThr[i]||"",d.airRefGain[i]?.gain||"",
+      d.airRecord[i]?.offset||"",d.airRecord[i]?.airMv||""];
+    tx=cx;
+    vals.forEach((v,j)=>{text(v,tx+colW[j]/2,y,10,j===0?"#d97706":"#000",j===0,"center");tx+=colW[j]});
+  }
+  y+=8;
+
+  // ===== X-RAY TUBES - HVU1 and HVU2 side by side =====
+  sectionTitle("X-RAY TUBES");
+  const halfW=(RW-20)/2;
+  ctx.fillStyle="#f5f5f0";ctx.fillRect(LM,y,RW,18);
+  text("",LM+10,y+13,9,"#666",true);
+  text("HVU1",LM+halfW/2+40,y+13,10,"#d97706",true,"center");
+  text("HVU2",LM+halfW+20+halfW/2+40,y+13,10,"#d97706",true,"center");
+  y+=18;hline(y);
+
+  y+=16;text("kV Real / Set",LM+10,y,10,"#888",true);
+  text((d.xray.kv1R||"-")+" / "+(d.xray.kv1||"-"),LM+halfW/2+40,y,11,"#000",false,"center");
+  text((d.xray.kv2R||"-")+" / "+(d.xray.kv2||"-"),LM+halfW+20+halfW/2+40,y,11,"#000",false,"center");
+
+  y+=16;text("mA Real / Set",LM+10,y,10,"#888",true);
+  text((d.xray.ma1R||"-")+" / "+(d.xray.ma1||"-"),LM+halfW/2+40,y,11,"#000",false,"center");
+  text((d.xray.ma2R||"-")+" / "+(d.xray.ma2||"-"),LM+halfW+20+halfW/2+40,y,11,"#000",false,"center");
+  y+=8;
+
+  // ===== DETECTION + EJECTOR side by side =====
+  y+=8;
+  const colL=LM,colR=W/2+10;
+  const colLW=W/2-LM-10,colRW=W/2-LM-10;
+  thickLine(y);y+=4;
+  text("DETECTION PARAMETERS",colL+colLW/2,y+16,11,"#d97706",true,"center");
+  text("EJECTOR PARAMETERS",colR+colRW/2,y+16,11,"#d97706",true,"center");
+  y+=22;hline(y);y+=8;
+
+  const detRows=[["T Convol",d.det.tConvol],["Convol",d.det.convol],
+    ["Tau min / max",(d.det.tauMin||"-")+" / "+(d.det.tauMax||"-")],
+    ["Ratio min / max",(d.det.ratioMin||"-")+" / "+(d.det.ratioMax||"-")],
+    ["t Threshold",d.det.tThresh]];
+  const ejRows2=[["On Time (ms)",d.ej.onTime],["Delay Time",d.ej.delayTime],
+    ["Active Delay",d.ej.activeDly],["Wash Active",d.ej.washTime],["1/2 Wash",d.ej.wash12]];
+
+  const maxRows=Math.max(detRows.length,ejRows2.length);
+  for(let i=0;i<maxRows;i++){
+    y+=16;
+    if(i<detRows.length){text(detRows[i][0],colL,y,10,"#888");text(detRows[i][1]||"-",colL+colLW-10,y,11,"#000",false,"right")}
+    if(i<ejRows2.length){text(ejRows2[i][0],colR,y,10,"#888");text(ejRows2[i][1]||"-",colR+colRW-10,y,11,"#000",false,"right")}
+  }
+  y+=8;
+
+  // ===== EJECTOR TEST =====
+  sectionTitle("EJECTOR TEST (ms)");
+  const nEj3=d.header.machineType==="LS-20-09"?5:4;
+  const ejCols=["",...Array.from({length:nEj3},(_2,i)=>"EJ"+(i+1))];
+  const ejColW=RW/(nEj3+1);
+  ctx.fillStyle="#f5f5f0";ctx.fillRect(LM,y,RW,18);
+  ejCols.forEach((c2,i)=>{text(c2,LM+i*ejColW+ejColW/2,y+13,9,"#666",true,"center")});
+  y+=18;hline(y);
+
+  [["Duration","tOpen"],["Resp Lag","tRet"]].forEach(([label,key])=>{
+    y+=16;text(label,LM+ejColW/2,y,10,"#d97706",true,"center");
+    for(let i=0;i<nEj3;i++){text(d.ejMs[key]["ch"+(i+1)]||"-",LM+(i+1)*ejColW+ejColW/2,y,11,"#000",false,"center")}
+  });
+  y+=8;
+
+  // ===== X-RAY HOURS =====
+  sectionTitle("X-RAY HOURS");
+  const xhItems=[["HV1",d.xrayH.hv1],["Tube1 Rpl",d.xrayH.tr1],["HV2",d.xrayH.hv2],["Tube2 Rpl",d.xrayH.tr2],["Gate",d.xrayH.gate]];
+  const xhW=RW/xhItems.length;
+  xhItems.forEach((item,i)=>{
+    text(item[0],LM+i*xhW,y,9,"#888",true);
+    text(item[1]||"-",LM+i*xhW,y+14,11,"#000");
+  });
+  y+=22;
+
+  // ===== REGISTRATION =====
+  y+=4;text("Registration:",LM,y,10,"#888",true);text("Block Time: "+(d.reg.blockTime||"-")+" ms",LM+90,y,11,"#000");
+  y+=8;
+
+  // ===== SERVICE =====
+  sectionTitle("SERVICE");
+  [["Delivery Note",d.delNote],["KM Total",d.km]].forEach(r=>{if(r[1]){y+=16;text(r[0],LM,y,10,"#888");text(r[1],LM+120,y,11,"#000")}});
+  if(d.spares){y+=18;text("Spares:",LM,y,10,"#888",true);
+    String(d.spares).split("\n").forEach(l=>{y+=14;text(l,LM+10,y,10,"#000")})}
+  if(d.notes){y+=18;text("Notes:",LM,y,10,"#888",true);
+    String(d.notes).split("\n").forEach(l=>{y+=14;text(l,LM+10,y,10,"#000")})}
+  y+=8;
+
+  // ===== SIGNATURES =====
+  y+=10;thickLine(y);y+=20;
+  text("SIGN-OFF",W/2,y,14,"#000",true,"center");
+  y+=16;text(so.dateTime,W/2,y,10,"#666",false,"center");
+
+  const sigY=y;
+  function loadImg(src){return new Promise(res=>{if(!src){res(null);return}const i=new Image();i.onload=()=>res(i);i.onerror=()=>res(null);i.src=src})}
+
+  Promise.all([loadImg(so.techSig),loadImg(so.opSig)]).then(([techImg,opImg])=>{
+    let y2=sigY;
+    y2+=28;
+    text("Technician: "+so.techName,LM,y2,11,"#000",true);
+    text("Operator: "+so.opName,W/2+20,y2,11,"#000",true);
+    y2+=8;
+    if(techImg)ctx.drawImage(techImg,LM,y2,180,65);
+    if(opImg)ctx.drawImage(opImg,W/2+20,y2,180,65);
+    y2+=70;hline(y2,LM,LM+180);hline(y2,W/2+20,W/2+200);
+
+    y2+=16;ctx.fillStyle="#d97706";ctx.fillRect(0,y2,W,3);
+
+    const finalH=y2+6;
+    const c2=document.createElement("canvas");c2.width=W;c2.height=finalH;
+    c2.getContext("2d").drawImage(c,0,0,W,finalH,0,0,W,finalH);
+
+    c2.toBlob(blob=>{
+      const fname=(d.header.customer||"Sorter")+"_Service_"+(d.header.date||"report").replace(/\//g,"-")+".png";
+      if(navigator.share&&navigator.canShare){
+        const file=new File([blob],fname,{type:"image/png"});
+        if(navigator.canShare({files:[file]})){
+          navigator.share({files:[file],title:"BV Service Report",text:"Service report: "+d.header.customer+" - "+d.header.date}).catch(function(){downloadBlob(blob,fname)});
+          return;
+        }
+      }
+      downloadBlob(blob,fname);
+    },"image/png");
+  });
+}
+
+function downloadBlob(blob,fname){
+  const u=URL.createObjectURL(blob);const a=document.createElement("a");
+  a.href=u;a.download=fname;a.click();URL.revokeObjectURL(u);
+}
+function startJob(site,machine){
+  S.selSite=site;S.selMach=machine;
+  const n=machine.model==="LS-20-09"?8:4;S.nCh=n;
+  const prev=loadJob(site.id,machine.id);
+  if(prev&&prev.data){
+    S.data=dc(prev.data);S.data.header.date=new Date().toLocaleDateString("en-GB");
+    S.data.notes="";S.data.spares="";S.data.delNote="";S.data.tech=S.techName;
+    S.prevJob=prev;S.log=`Loaded previous: ${prev.tech} (${prev.dateStr})\n`;
+  }else{
+    S.data=tmpl(n);S.data.header.customer=site.name;S.data.header.machineType=machine.model||"";
+    S.data.header.bvNo=machine.bvNo||"";S.data.header.mchNo=machine.mchNo||"";S.data.tech=S.techName;
+    S.prevJob=null;S.log="";
+  }
+  SCREENS.forEach(s=>S.screenSts[s.id]="pending");
+  S.err=null;S.phase="capture";
+  S.signoff={techName:S.techName,techSig:null,opName:"",opSig:null,dateTime:"",signed:false};
+  render();
+}
+
+// ===================== RENDER =====================
+function h(tag,props,...ch){
+  const el=document.createElement(tag);
+  if(props)Object.entries(props).forEach(([k,v])=>{
+    if(k==="style"&&typeof v==="object")Object.assign(el.style,v);
+    else if(k.startsWith("on"))el[k.toLowerCase()]=v;
+    else if(k==="className")el.className=v;
+    else if(k==="innerHTML")el.innerHTML=v;
+    else el.setAttribute(k,v);
+  });
+  ch.flat(9).forEach(c=>{if(c!=null&&c!==false)el.appendChild(typeof c==="string"?document.createTextNode(c):c)});
+  return el;
+}
+
+function inp(val,fn,w){
+  const el=h("input",{type:"text",className:"inp",value:val||"",style:{width:(w||60)+"px"}});
+  el.oninput=e=>fn(e.target.value);return el;
+}
+function lbl(t){return h("div",{className:"lbl"},t)}
+function fld(l,val,fn,w){return h("div",{},lbl(l),inp(val,fn,w))}
+function sec(title,color,content){
+  return h("div",{className:"sec"},h("div",{className:"sec-h",style:{color:color||"#f59e0b"}},title),h("div",{className:"sec-b"},content));
+}
+
+function render(){
+  const app=document.getElementById("app");app.innerHTML="";
+  const doneCount=Object.values(S.screenSts).filter(s=>s==="done").length;
+
+  // HEADER BAR
+  function headerBar(title,backFn){
+    const bar=h("div",{style:{padding:"10px 14px",borderBottom:"1px solid #1e293b",display:"flex",alignItems:"center",gap:"10px"}});
+    if(backFn)bar.appendChild(h("button",{style:{background:"none",border:"none",color:"#94a3b8",fontSize:"20px",cursor:"pointer",padding:"2px 6px"},onClick:backFn},"←"));
+    bar.appendChild(h("div",{style:{width:"32px",height:"32px",borderRadius:"8px",background:"linear-gradient(135deg,#f59e0b,#d97706)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"16px"},innerHTML:"💎"}));
+    bar.appendChild(h("div",{style:{flex:"1",fontWeight:"800",fontSize:"15px",color:"#f1f5f9"}},title));
+    return bar;
+  }
+
+  // =========== SETTINGS ===========
+  if(S.phase==="settings"){
+    app.appendChild(headerBar("Settings",()=>{S.phase="site";render()}));
+    const wrap=h("div",{style:{padding:"14px",maxWidth:"860px",margin:"0 auto"}});
+    wrap.appendChild(h("div",{className:"lbl"},"Anthropic API Key"));
+    const ki=h("input",{type:"password",className:"inp",value:S.apiKey,style:{width:"100%",textAlign:"left",marginBottom:"10px"}});
+    ki.oninput=e=>{S.apiKey=e.target.value;ls("bv_key",e.target.value)};
+    wrap.appendChild(ki);
+    wrap.appendChild(h("div",{style:{color:"#64748b",fontSize:"10px",marginBottom:"16px"}},"Required for AI photo extraction. Get from console.anthropic.com"));
+
+    // ---- CLOUD SYNC ----
+    wrap.appendChild(h("div",{style:{color:"#f59e0b",fontSize:"12px",fontWeight:"700",marginBottom:"8px"}},"☁️ Cloud Sync"));
+
+    if(CLOUD.enabled()){
+      const box=h("div",{style:{padding:"10px",marginBottom:"10px",borderRadius:"8px",background:"rgba(34,197,94,0.08)",border:"1px solid rgba(34,197,94,0.3)"}});
+      box.appendChild(h("div",{style:{color:"#22c55e",fontSize:"12px",fontWeight:"700"}},"✅ Cloud sync active"));
+      if(CLOUD.lastSync)box.appendChild(h("div",{style:{color:"#94a3b8",fontSize:"10px",marginTop:"3px"}},"Last sync: "+CLOUD.lastSync));
+      if(CLOUD.error)box.appendChild(h("div",{style:{color:"#fca5a5",fontSize:"10px",marginTop:"3px"}},"⚠️ "+CLOUD.error));
+
+      // Show Bin ID for sharing
+      box.appendChild(h("div",{style:{marginTop:"8px",padding:"6px 8px",background:"#0f172a",borderRadius:"4px",fontFamily:"monospace",fontSize:"12px",color:"#f59e0b",wordBreak:"break-all",userSelect:"all"}},CLOUD.binId));
+      box.appendChild(h("div",{style:{color:"#64748b",fontSize:"10px",marginTop:"3px"}},"☝️ Share this code with other techs — they paste it below to sync"));
+
+      const syncBtns=h("div",{style:{display:"flex",gap:"8px",marginTop:"8px"}});
+      syncBtns.appendChild(h("button",{className:"btn",style:{padding:"8px 14px",background:CLOUD.syncing?"#334155":"linear-gradient(135deg,#3b82f6,#2563eb)",color:"#fff",fontSize:"12px"},
+        onClick:()=>{if(!CLOUD.syncing)cloudPull()}},CLOUD.syncing?"⏳ Syncing...":"🔄 Pull from Cloud"));
+      syncBtns.appendChild(h("button",{className:"btn",style:{padding:"8px 14px",background:CLOUD.syncing?"#334155":"linear-gradient(135deg,#22c55e,#16a34a)",color:"#fff",fontSize:"12px"},
+        onClick:()=>{if(!CLOUD.syncing)cloudPush()}},CLOUD.syncing?"⏳ Syncing...":"☁️ Push to Cloud"));
+      box.appendChild(syncBtns);
+
+      // Disconnect
+      box.appendChild(h("button",{className:"btn",style:{marginTop:"8px",padding:"4px 10px",border:"1px solid #334155",background:"transparent",color:"#64748b",fontSize:"10px"},
+        onClick:()=>{if(confirm("Disconnect cloud sync? Your local data stays.")){CLOUD.binId="";ls("bv_cloud_id",null);render()}}},"Disconnect Cloud"));
+
+      wrap.appendChild(box);
+    }else{
+      const box=h("div",{style:{padding:"10px",marginBottom:"10px",borderRadius:"8px",background:"rgba(245,158,11,0.06)",border:"1px solid rgba(245,158,11,0.3)"}});
+      box.appendChild(h("div",{style:{color:"#f59e0b",fontSize:"11px",fontWeight:"600",marginBottom:"8px"}},"Not connected — choose one:"));
+
+      // Setup instructions
+      box.appendChild(h("div",{style:{color:"#e2e8f0",fontSize:"12px",fontWeight:"700",marginBottom:"6px"}},"First tech — create the cloud (1 minute):"));
+      const steps=h("div",{style:{color:"#94a3b8",fontSize:"11px",lineHeight:"1.6"}});
+      steps.innerHTML="1️⃣ Open <b style='color:#f59e0b'>npoint.io</b> on your phone<br>"+
+        "2️⃣ Paste <b style='color:#f59e0b'>{}</b> in the editor<br>"+
+        "3️⃣ Tap <b style='color:#f59e0b'>Save</b><br>"+
+        "4️⃣ Copy the code from the green URL at the bottom<br>"+
+        "&nbsp;&nbsp;&nbsp;&nbsp;(looks like: <b style='color:#22c55e'>api.npoint.io/abc123def456</b>)<br>"+
+        "5️⃣ Paste ONLY the code part below (the bit after the /)";
+      box.appendChild(steps);
+
+      // Open npoint button
+      box.appendChild(h("button",{className:"btn",style:{width:"100%",padding:"12px",marginTop:"8px",marginBottom:"10px",background:"linear-gradient(135deg,#f59e0b,#d97706)",color:"#000",fontSize:"13px",fontWeight:"800"},
+        onClick:()=>{window.open("https://www.npoint.io/docs/empty","_blank")}},"🌐 Open npoint.io"));
+
+      if(CLOUD.error){
+        box.appendChild(h("div",{style:{padding:"6px 8px",marginBottom:"8px",borderRadius:"4px",background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",color:"#fca5a5",fontSize:"10px"}},CLOUD.error));
+      }
+
+      // Join section
+      box.appendChild(h("div",{style:{color:"#94a3b8",fontSize:"10px",textAlign:"center",marginBottom:"6px"}},"— Paste your code OR a code from another tech —"));
+      const joinInp=h("input",{type:"text",className:"inp",placeholder:"e.g. abc123def456",style:{width:"100%",textAlign:"left",marginBottom:"6px",fontSize:"13px",fontFamily:"monospace"}});
+      const joinBtn=h("button",{className:"btn",style:{width:"100%",padding:"10px",background:"linear-gradient(135deg,#3b82f6,#2563eb)",color:"#fff",fontSize:"12px"},
+        onClick:async()=>{
+          const id=joinInp.value.trim();
+          if(!id){alert("Paste the code first");return}
+          CLOUD.binId=id;ls("bv_cloud_id",id);
+          await cloudPull();
+          if(!CLOUD.error)alert("Connected! You now share data with other techs.");
+        }},"🔗 Join Existing Cloud");
+      box.appendChild(joinInp);
+      box.appendChild(joinBtn);
+
+      box.appendChild(h("div",{style:{color:"#64748b",fontSize:"10px",marginTop:"8px"}},"No signup needed. Takes 1 minute. All techs use the same code to share data."));
+      wrap.appendChild(box);
+    }
+
+    // Export/Import
+    wrap.appendChild(h("div",{style:{color:"#f59e0b",fontSize:"12px",fontWeight:"700",marginBottom:"8px"}},"Backup / Export"));
+    wrap.appendChild(h("div",{style:{color:"#64748b",fontSize:"10px",marginBottom:"10px"}},"Cloud sync is the main way to share. Use export as backup or to move data manually."));
+
+    const btns=h("div",{style:{display:"flex",gap:"8px",flexWrap:"wrap",marginBottom:"16px"}});
+
+    // Full backup export
+    btns.appendChild(h("button",{className:"btn",style:{padding:"10px 16px",background:"linear-gradient(135deg,#22c55e,#16a34a)",color:"#fff",fontSize:"13px"},onClick:exportAllData},"📤 Export All Data"));
+
+    // Full backup import
+    const impBtn=h("button",{className:"btn",style:{padding:"10px 16px",background:"linear-gradient(135deg,#3b82f6,#2563eb)",color:"#fff",fontSize:"13px"}},"📥 Import Data");
+    const impInp=h("input",{type:"file",accept:".json",style:{display:"none"}});
+    impInp.onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();
+      r.onload=ev=>{if(importAllData(ev.target.result)){S.err=null;alert("Data imported successfully!")}};
+      r.readAsText(f);e.target.value=""};
+    impBtn.onclick=()=>impInp.click();
+    btns.appendChild(impBtn);btns.appendChild(impInp);
+    wrap.appendChild(btns);
+
+    // Site-only export (legacy)
+    wrap.appendChild(h("div",{style:{color:"#94a3b8",fontSize:"11px",fontWeight:"600",marginBottom:"6px"}},"Advanced"));
+    const btns2=h("div",{style:{display:"flex",gap:"8px",flexWrap:"wrap",marginBottom:"16px"}});
+    btns2.appendChild(h("button",{className:"btn",style:{padding:"6px 12px",border:"1px solid #334155",background:"transparent",color:"#64748b",fontSize:"11px"},onClick:exportSitesJSON},"📤 Export Sites Only"));
+
+    // Sites-only import
+    const impBtn2=h("button",{className:"btn",style:{padding:"6px 12px",border:"1px solid #334155",background:"transparent",color:"#64748b",fontSize:"11px"}},"📥 Import Sites Only");
+    const impInp2=h("input",{type:"file",accept:".json",style:{display:"none"}});
+    impInp2.onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();
+      r.onload=ev=>{try{const s=JSON.parse(ev.target.result);if(Array.isArray(s)){S.sites=s;saveSites(s);render()}}catch(x){S.err="Invalid JSON";render()}};
+      r.readAsText(f);e.target.value=""};
+    impBtn2.onclick=()=>impInp2.click();
+    btns2.appendChild(impBtn2);btns2.appendChild(impInp2);
+
+    // Clear all data
+    btns2.appendChild(h("button",{className:"btn",style:{padding:"6px 12px",border:"1px solid #ef4444",background:"transparent",color:"#ef4444",fontSize:"11px"},onClick:()=>{
+      if(confirm("Clear ALL data? This removes all service history, site info, and settings from this phone.")){
+        const keys=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k.startsWith("bv_"))keys.push(k)}
+        keys.forEach(k=>localStorage.removeItem(k));
+        S.sites=JSON.parse(JSON.stringify(DEFAULT_SITES));S.jobMetas={};S.apiKey="";S.techName="";
+        alert("All data cleared.");render();
+      }
+    }},"🗑️ Clear All Data"));
+    wrap.appendChild(btns2);
+
+    app.appendChild(wrap);return;
+  }
+
+  // =========== SITE SELECTION ===========
+  if(S.phase==="site"){
+    app.appendChild(headerBar("Select Site"));
+    const wrap=h("div",{style:{padding:"14px",maxWidth:"860px",margin:"0 auto"}});
+
+    // Settings gear + sync
+    const topBar=h("div",{style:{display:"flex",justifyContent:"flex-end",gap:"6px",alignItems:"center",marginBottom:"10px"}});
+    if(CLOUD.enabled()){
+      if(CLOUD.syncing){
+        topBar.appendChild(h("span",{style:{fontSize:"10px",color:"#f59e0b"}},"⏳ Syncing..."));
+      }else{
+        topBar.appendChild(h("button",{className:"btn",style:{padding:"6px 12px",border:"1px solid rgba(34,197,94,0.4)",background:"rgba(34,197,94,0.08)",color:"#22c55e",fontSize:"11px"},onClick:()=>cloudPull()},"🔄 Sync"));
+        if(CLOUD.error)topBar.appendChild(h("span",{style:{fontSize:"10px",color:"#fca5a5"}},"⚠️"));
+      }
+    }else{
+      topBar.appendChild(h("span",{style:{fontSize:"10px",color:"#64748b"}},"☁️ offline"));
+    }
+    topBar.appendChild(h("button",{className:"btn",style:{padding:"6px 12px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",fontSize:"11px"},onClick:()=>{S.phase="settings";render()}},"⚙️ Settings"));
+    wrap.appendChild(topBar);
+
+    if(S.err){
+      const errBox=h("div",{style:{marginBottom:"8px",padding:"6px 10px",borderRadius:"6px",background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",color:"#fca5a5",fontSize:"11px"}},S.err);
+      wrap.appendChild(errBox);
+    }
+
+    // Tech name
+    const techRow=h("div",{style:{marginBottom:"12px",padding:"10px",background:"rgba(15,23,42,0.5)",borderRadius:"8px",border:"1px solid #1e293b",display:"flex",alignItems:"center",gap:"8px"}});
+    techRow.appendChild(h("span",{style:{fontSize:"11px",color:"#94a3b8",fontWeight:"600",whiteSpace:"nowrap"}},"👤 Tech:"));
+    const techInp=h("input",{type:"text",value:S.techName,placeholder:"Your name",style:{flex:"1",padding:"5px 8px",border:"1px solid #334155",borderRadius:"6px",background:"#0f172a",color:"#e2e8f0",fontSize:"13px",fontFamily:"inherit"}});
+    techInp.oninput=e=>{S.techName=e.target.value;ls("bv_tech",e.target.value)};
+    techRow.appendChild(techInp);
+    wrap.appendChild(techRow);
+
+    wrap.appendChild(h("div",{style:{color:"#94a3b8",fontSize:"12px",marginBottom:"10px"}},"Tap a site to start service sheet"));
+
+    // Site cards
+    S.sites.forEach(site=>{
+      const div=h("div",{style:{marginBottom:"6px"}});
+      if(site.machines.length===1){
+        const meta=S.jobMetas[`${site.id}:${site.machines[0].id}`];
+        const card=h("div",{style:{background:"rgba(51,65,85,0.15)",border:"1.5px solid #334155",borderRadius:"12px",padding:"12px 14px",display:"flex",alignItems:"center",gap:"12px"}});
+        const clickArea=h("div",{style:{display:"flex",alignItems:"center",gap:"12px",flex:"1",cursor:"pointer"},onClick:()=>startJob(site,site.machines[0])});
+        clickArea.appendChild(h("div",{style:{width:"42px",height:"42px",borderRadius:"10px",background:meta?"rgba(34,197,94,0.15)":"#1e293b",border:meta?"1px solid rgba(34,197,94,0.3)":"none",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"20px"},innerHTML:"⛏️"}));
+        const info=h("div",{style:{flex:"1",minWidth:"0"}});
+        info.appendChild(h("div",{style:{fontSize:"14px",fontWeight:"700"}},site.name));
+        info.appendChild(h("div",{style:{fontSize:"11px",color:"#64748b"}},`${site.machines[0].model||"No model"}${site.machines[0].bvNo?` • BV: ${site.machines[0].bvNo}`:""}`));
+        if(meta)info.appendChild(h("div",{style:{fontSize:"10px",color:"#22c55e",marginTop:"2px"}},`Last: ${meta.tech} • ${meta.dateStr}`));
+        clickArea.appendChild(info);card.appendChild(clickArea);
+        if(meta){card.appendChild(h("button",{style:{width:"36px",height:"36px",borderRadius:"8px",border:"none",cursor:"pointer",background:"rgba(59,130,246,0.15)",color:"#60a5fa",fontSize:"15px",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:"0"},innerHTML:"📊",onClick:e=>{e.stopPropagation();exportSiteExcel(site)}}));}
+        card.appendChild(h("div",{style:{color:"#64748b",fontSize:"18px",cursor:"pointer",flexShrink:"0"},onClick:()=>startJob(site,site.machines[0])},"→"));
+        div.appendChild(card);
+      }else{
+        const hasMeta=site.machines.some(m=>S.jobMetas[`${site.id}:${m.id}`]);
+        const card=h("div",{style:{background:"rgba(51,65,85,0.15)",border:"1.5px solid #334155",borderRadius:"12px",padding:"12px 14px"}});
+        const top=h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}});
+        top.appendChild(h("div",{style:{fontSize:"14px",fontWeight:"700"}},site.name));
+        if(hasMeta)top.appendChild(h("button",{className:"btn",style:{padding:"4px 8px",background:"rgba(59,130,246,0.15)",color:"#60a5fa",fontSize:"10px",gap:"3px"},onClick:()=>exportSiteExcel(site),innerHTML:"📊 History"}));
+        card.appendChild(top);
+        site.machines.forEach(m=>{
+          const meta=S.jobMetas[`${site.id}:${m.id}`];
+          const mc=h("div",{style:{background:"rgba(245,158,11,0.05)",border:"1px solid #1e293b",borderRadius:"8px",padding:"8px 12px",display:"flex",alignItems:"center",gap:"10px",cursor:"pointer",marginBottom:"4px"},onClick:()=>startJob(site,m)});
+          mc.appendChild(h("div",{style:{width:"32px",height:"32px",borderRadius:"8px",background:meta?"rgba(34,197,94,0.15)":"#1e293b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"15px"},innerHTML:"⚙️"}));
+          const mi=h("div",{style:{flex:"1"}});
+          mi.appendChild(h("div",{style:{fontSize:"13px",fontWeight:"600"}},m.label||m.id));
+          mi.appendChild(h("div",{style:{fontSize:"10px",color:"#64748b"}},`${m.model||"No model"}${m.bvNo?` • BV: ${m.bvNo}`:""}`));
+          if(meta)mi.appendChild(h("div",{style:{fontSize:"10px",color:"#22c55e",marginTop:"1px"}},`Last: ${meta.tech} • ${meta.dateStr}`));
+          mc.appendChild(mi);mc.appendChild(h("div",{style:{color:"#64748b",fontSize:"16px"}},"→"));
+          card.appendChild(mc);
+        });
+        div.appendChild(card);
+      }
+      wrap.appendChild(div);
+    });
+    app.appendChild(wrap);return;
+  }
+
+  // =========== CAPTURE / SHEET / LOG ===========
+  app.appendChild(headerBar(`${S.selSite?.name||""} ${S.selMach?.label||""}`,()=>{saveMachineDetails();S.phase="site";render()}));
+
+  // Progress bar
+  const prog=h("div",{style:{padding:"6px 14px",borderBottom:"1px solid #1e293b",display:"flex",alignItems:"center",gap:"8px"}});
+  const progBg=h("div",{style:{flex:"1",height:"6px",background:"#1e293b",borderRadius:"3px",overflow:"hidden"}});
+  progBg.appendChild(h("div",{style:{width:`${doneCount/SCREENS.length*100}%`,height:"100%",borderRadius:"3px",transition:"width 0.5s",background:doneCount===SCREENS.length?"#22c55e":"linear-gradient(90deg,#f59e0b,#d97706)"}}));
+  prog.appendChild(progBg);
+  prog.appendChild(h("span",{style:{fontSize:"11px",fontWeight:"700",color:doneCount===SCREENS.length?"#22c55e":"#f59e0b"}},`${doneCount}/${SCREENS.length}`));
+  app.appendChild(prog);
+
+  // Tabs
+  const tabs=h("div",{style:{display:"flex",borderBottom:"1px solid #1e293b",padding:"0 14px"}});
+  [["capture","📷 Capture"],["sheet","📋 Sheet"],["signoff","✍️ Sign-Off"],["log","📝 Log"]].forEach(([id,l])=>{
+    tabs.appendChild(h("button",{className:`tab ${S.phase===id?"on":"off"}`,onClick:()=>{S.phase=id;render()}},l));
+  });
+  app.appendChild(tabs);
+
+  // Error
+  if(S.err){
+    const errBox=h("div",{style:{margin:"6px 14px",padding:"8px 10px",borderRadius:"6px",background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",color:"#fca5a5",fontSize:"11px",display:"flex",justifyContent:"space-between"}});
+    errBox.appendChild(h("span",{style:{flex:"1"}},S.err));
+    errBox.appendChild(h("button",{style:{background:"none",border:"none",color:"#fca5a5",cursor:"pointer",fontSize:"14px"},onClick:()=>{S.err=null;render()}},"×"));
+    app.appendChild(errBox);
+  }
+
+  const content=h("div",{style:{padding:"14px",maxWidth:"860px",margin:"0 auto",paddingBottom:"80px"}});
+
+  // ---- CAPTURE ----
+  if(S.phase==="capture"){
+    if(S.prevJob){
+      const pj=h("div",{style:{marginBottom:"10px",padding:"10px",background:"rgba(34,197,94,0.08)",border:"1px solid rgba(34,197,94,0.3)",borderRadius:"8px"}});
+      pj.appendChild(h("div",{style:{fontSize:"12px",color:"#22c55e",fontWeight:"700"}},"📋 Previous data loaded"));
+      pj.appendChild(h("div",{style:{fontSize:"11px",color:"#94a3b8",marginTop:"2px"}},`Last: ${S.prevJob.tech} on ${S.prevJob.dateStr}. New readings overwrite.`));
+      content.appendChild(pj);
+    }
+    const list=h("div",{style:{display:"flex",flexDirection:"column",gap:"7px"}});
+    SCREENS.forEach(scr=>{
+      const sts=S.screenSts[scr.id];
+      const col={pending:"#334155",processing:"#f59e0b",done:"#22c55e",error:"#ef4444"}[sts];
+      const bg={pending:"rgba(51,65,85,0.15)",processing:"rgba(245,158,11,0.1)",done:"rgba(34,197,94,0.08)",error:"rgba(239,68,68,0.1)"}[sts];
+      const lab={pending:"Tap to capture",processing:"Analyzing...",done:"Extracted ✓",error:"Tap to retry"}[sts];
+
+      const card=h("div",{style:{background:bg,border:`1.5px solid ${col}`,borderRadius:"12px",padding:"11px 13px",display:"flex",alignItems:"center",gap:"11px",cursor:sts==="processing"?"wait":"pointer"}});
+
+      const icon=h("div",{style:{width:"42px",height:"42px",borderRadius:"10px",background:sts==="done"?"#22c55e":sts==="processing"?"#f59e0b":"#1e293b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"21px",flexShrink:"0",color:sts==="done"||sts==="processing"?"#000":"#fff"}});
+      icon.innerHTML=sts==="done"?"✓":sts==="processing"?'<span class="spinner"></span>':scr.icon;
+      card.appendChild(icon);
+
+      const info=h("div",{style:{flex:"1"}});
+      info.appendChild(h("div",{style:{fontSize:"14px",fontWeight:"700",color:sts==="done"?"#22c55e":"#e2e8f0"}},scr.name));
+      info.appendChild(h("div",{style:{fontSize:"11px",fontWeight:"600",color:col}},lab));
+      card.appendChild(info);
+
+      // Camera button
+      const camInp=h("input",{type:"file",accept:"image/*",capture:"environment",style:{display:"none"}});
+      camInp.onchange=e=>{if(e.target.files[0])processImage(e.target.files[0],scr.id);e.target.value=""};
+      const camBtn=h("button",{style:{width:"38px",height:"38px",borderRadius:"9px",border:"none",cursor:"pointer",fontSize:"17px",background:sts==="done"?"rgba(34,197,94,0.2)":"rgba(245,158,11,0.2)",color:sts==="done"?"#22c55e":"#f59e0b",display:"flex",alignItems:"center",justifyContent:"center"},innerHTML:"📷",onClick:e=>{e.stopPropagation();camInp.click()}});
+
+      // File button
+      const fileInp=h("input",{type:"file",accept:"image/*",style:{display:"none"}});
+      fileInp.onchange=e=>{if(e.target.files[0])processImage(e.target.files[0],scr.id);e.target.value=""};
+      const fileBtn=h("button",{style:{width:"38px",height:"38px",borderRadius:"9px",border:"none",cursor:"pointer",fontSize:"16px",background:"rgba(100,116,139,0.15)",color:"#94a3b8",display:"flex",alignItems:"center",justifyContent:"center"},innerHTML:"📁",onClick:e=>{e.stopPropagation();fileInp.click()}});
+
+      const btns=h("div",{style:{display:"flex",gap:"5px"}},camInp,camBtn,fileInp,fileBtn);
+      card.appendChild(btns);
+
+      card.onclick=()=>{if(sts!=="processing")camInp.click()};
+      list.appendChild(card);
+    });
+    content.appendChild(list);
+
+    if(doneCount===SCREENS.length){
+      const done=h("div",{style:{marginTop:"16px",padding:"16px",background:"rgba(34,197,94,0.1)",border:"2px solid #22c55e",borderRadius:"12px",textAlign:"center"}});
+      done.innerHTML='<div style="font-size:24px">🎉</div><div style="color:#22c55e;font-weight:700;font-size:16px;margin-top:4px">All done!</div>';
+      done.appendChild(h("button",{className:"btn",style:{marginTop:"8px",padding:"8px 20px",background:"linear-gradient(135deg,#22c55e,#16a34a)",color:"#fff",fontSize:"13px",display:"inline-flex"},onClick:()=>{S.phase="sheet";render()}},"Review & Export"));
+      content.appendChild(done);
+    }else if(doneCount>0){
+      content.appendChild(h("button",{style:{marginTop:"12px",width:"100%",padding:"10px",borderRadius:"8px",border:"1px solid #334155",background:"rgba(245,158,11,0.1)",color:"#f59e0b",fontSize:"13px",fontWeight:"700",cursor:"pointer"},onClick:()=>{S.phase="sheet";render()}},`View partial (${doneCount}/${SCREENS.length})`));
+    }
+  }
+
+  // ---- SHEET ----
+  if(S.phase==="sheet"){
+    const d=S.data;
+    const u=(path,val)=>{const k=path.split(".");let o=d;for(let i=0;i<k.length-1;i++)o=o[k[i]];o[k[k.length-1]]=val;render()};
+
+    const topRow=h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px",flexWrap:"wrap",gap:"6px"}});
+    topRow.appendChild(h("div",{style:{color:"#94a3b8",fontSize:"12px"}},`${doneCount}/${SCREENS.length} screens`));
+    const btns=h("div",{style:{display:"flex",gap:"5px",flexWrap:"wrap"}});
+    btns.appendChild(h("button",{className:"btn",style:{padding:"6px 12px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",fontSize:"11px"},onClick:saveMachineDetails},"💾 Save"));
+    btns.appendChild(h("button",{className:"btn",style:{padding:"6px 14px",background:"linear-gradient(135deg,#22c55e,#16a34a)",color:"#fff",fontSize:"11px"},onClick:toCSV},"📥 CSV"));
+    btns.appendChild(h("button",{className:"btn",style:{padding:"6px 14px",background:"linear-gradient(135deg,#3b82f6,#2563eb)",color:"#fff",fontSize:"11px"},onClick:()=>{saveMachineDetails();exportSiteExcel(S.selSite)}},"📊 Excel"));
+    topRow.appendChild(btns);content.appendChild(topRow);
+
+    // Machine Info
+    const modelSel=h("select",{className:"inp",style:{width:"120px",textAlign:"left"},value:d.header.machineType||""});
+    modelSel.appendChild(h("option",{value:""},"Select..."));
+    MODELS.forEach(m=>{const o=h("option",{value:m},m);if(d.header.machineType===m)o.selected=true;modelSel.appendChild(o)});
+    modelSel.onchange=e=>{d.header.machineType=e.target.value;render()};
+    content.appendChild(sec("Machine Info","#f59e0b",h("div",{className:"row"},
+      fld("Customer",d.header.customer,v=>u("header.customer",v),120),
+      h("div",{},lbl("Model"),modelSel),
+      fld("MCH No",d.header.mchNo,v=>u("header.mchNo",v),70),
+      fld("BV No",d.header.bvNo,v=>u("header.bvNo",v),70),
+      fld("Date",d.header.date,v=>u("header.date",v),85)
+    )));
+
+    // Air Record table
+    function chTable(title,color,cols,data,path){
+      const tbl=h("table",{style:{width:"100%",borderCollapse:"collapse"}});
+      const thead=h("tr",{style:{background:"#1e293b"}});
+      thead.appendChild(h("th",{style:{padding:"4px",color:"#94a3b8",fontSize:"10px"}},"CH"));
+      cols.forEach(c=>thead.appendChild(h("th",{style:{padding:"4px",color:"#94a3b8",fontSize:"10px"}},c.l)));
+      tbl.appendChild(thead);
+      data.forEach((r,i)=>{
+        const tr=h("tr",{style:{borderTop:"1px solid #1e293b"}});
+        tr.appendChild(h("td",{style:{textAlign:"center",color:"#f59e0b",fontWeight:"700",fontSize:"11px",padding:"3px"}},String(r.ch)));
+        cols.forEach(c=>{tr.appendChild(h("td",{style:{padding:"2px",textAlign:"center"}},inp(r[c.k],v=>{d[path][i][c.k]=v;render()},c.w||55)))});
+        tbl.appendChild(tr);
+      });
+      return sec(title,color,h("div",{style:{overflowX:"auto"}},tbl));
+    }
+
+    content.appendChild(chTable("Air Record","#22c55e",[{k:"offset",l:"OFFSET",w:58},{k:"airMv",l:"Air(mV)",w:58}],d.airRecord,"airRecord"));
+    content.appendChild(chTable("PMT Voltages","#f59e0b",[{k:"set",l:"SET",w:58},{k:"real",l:"REAL",w:58}],d.pmtVoltages,"pmtVoltages"));
+    content.appendChild(chTable("Air Ref Gain","#f59e0b",[{k:"gain",l:"Gain",w:58}],d.airRefGain,"airRefGain"));
+
+    // Detection
+    const detContent=h("div",{style:{display:"flex",gap:"12px",flexWrap:"wrap"}});
+    ["scThr","fcThr"].forEach(type=>{
+      const col=h("div",{});col.appendChild(lbl(type==="scThr"?"SC THR":"FC THR"));
+      d.det[type].forEach((v,i)=>{
+        const row=h("div",{style:{display:"flex",gap:"3px",alignItems:"center",marginBottom:"2px"}});
+        row.appendChild(h("span",{style:{color:"#f59e0b",fontSize:"10px",width:"14px",fontWeight:"700"}},String(i+1)));
+        row.appendChild(inp(v,x=>{d.det[type][i]=x;render()},58));
+        col.appendChild(row);
+      });
+      detContent.appendChild(col);
+    });
+    const algoCol=h("div",{});algoCol.appendChild(lbl("Algorithm"));
+    [["TConv","tConvol"],["Conv","convol"],["TauMn","tauMin"],["TauMx","tauMax"],["RatMn","ratioMin"],["RatMx","ratioMax"],["TThr","tThresh"]].forEach(([l,k])=>{
+      algoCol.appendChild(h("div",{style:{marginBottom:"2px"}},fld(l,d.det[k],v=>{d.det[k]=v;render()},58)));
+    });
+    detContent.appendChild(algoCol);
+    content.appendChild(sec("Detection","#22c55e",detContent));
+
+    // X-ray Tubes
+    const xrayContent=h("div",{style:{display:"flex",gap:"14px",flexWrap:"wrap"}});
+    [["Tube 1","kv1","ma1","kv1R","ma1R"],["Tube 2","kv2","ma2","kv2R","ma2R"]].forEach(([t,k,m,kr,mr])=>{
+      const col=h("div",{});
+      col.appendChild(h("div",{style:{color:"#f59e0b",fontSize:"11px",fontWeight:"700",marginBottom:"3px"}},t));
+      col.appendChild(h("div",{className:"row"},fld("HV SET",d.xray[k],v=>u("xray."+k,v)),fld("REAL",d.xray[kr],v=>u("xray."+kr,v))));
+      col.appendChild(h("div",{className:"row"},fld("mA SET",d.xray[m],v=>u("xray."+m,v)),fld("REAL",d.xray[mr],v=>u("xray."+mr,v))));
+      xrayContent.appendChild(col);
+    });
+    content.appendChild(sec("X-ray Tubes","#f59e0b",xrayContent));
+
+    // X-ray Hours
+    content.appendChild(sec("X-ray Hours","#f59e0b",h("div",{className:"row"},
+      fld("HV1",d.xrayH.hv1,v=>u("xrayH.hv1",v)),fld("T1Rpl",d.xrayH.tr1,v=>u("xrayH.tr1",v),68),
+      fld("HV2",d.xrayH.hv2,v=>u("xrayH.hv2",v)),fld("T2Rpl",d.xrayH.tr2,v=>u("xrayH.tr2",v),68),
+      fld("Gate",d.xrayH.gate,v=>u("xrayH.gate",v)))));
+
+    // Ejector Settings
+    content.appendChild(sec("Ejector Settings","#f59e0b",h("div",{className:"row"},
+      fld("On(ms)",d.ej.onTime,v=>u("ej.onTime",v)),fld("Dly(ms)",d.ej.delayTime,v=>u("ej.delayTime",v)),
+      fld("ActDly",d.ej.activeDly,v=>u("ej.activeDly",v)),fld("Wash",d.ej.washTime,v=>u("ej.washTime",v)),
+      fld("W12",d.ej.wash12,v=>u("ej.wash12",v),38))));
+
+    // Ejector Test
+    const nEj=d.header.machineType==="LS-20-09"?5:4;
+    const ejTbl=h("table",{style:{borderCollapse:"collapse"}});
+    const ejHead=h("tr",{style:{background:"#1e293b"}});
+    ejHead.appendChild(h("th",{style:{padding:"4px",color:"#94a3b8",fontSize:"10px"}},""));
+    for(let i=1;i<=nEj;i++)ejHead.appendChild(h("th",{style:{padding:"4px",color:"#94a3b8",fontSize:"10px"}},`EJ${i}`));
+    ejTbl.appendChild(ejHead);
+    [["tOpen","Duration"],["tRet","Resp Lag"]].forEach(([k,label])=>{
+      const tr=h("tr",{style:{borderTop:"1px solid #1e293b"}});
+      tr.appendChild(h("td",{style:{padding:"3px 6px",color:"#f59e0b",fontWeight:"600",fontSize:"10px",whiteSpace:"nowrap"}},label));
+      for(let i=1;i<=nEj;i++){
+        const ch=`ch${i}`;
+        tr.appendChild(h("td",{style:{padding:"2px"}},inp(d.ejMs[k][ch],v=>{d.ejMs[k][ch]=v;render()},48)));
+      }
+      ejTbl.appendChild(tr);
+    });
+    content.appendChild(sec("Ejector Test (ms)","#22c55e",ejTbl));
+
+    // Registration
+    content.appendChild(sec("Registration","#f59e0b",h("div",{className:"row"},fld("Block(ms)",d.reg.blockTime,v=>u("reg.blockTime",v)))));
+
+    // Service
+    const svcContent=h("div",{});
+    svcContent.appendChild(h("div",{style:{marginBottom:"4px"}},lbl("Del Note No"),inp(d.delNote,v=>{d.delNote=v;render()},140)));
+    const sparesTA=h("textarea",{style:{width:"100%",minHeight:"35px",padding:"5px",border:"1px solid #334155",borderRadius:"4px",background:"#0f172a",color:"#e2e8f0",fontSize:"12px",fontFamily:"monospace",resize:"vertical"}});
+    sparesTA.value=d.spares||"";sparesTA.oninput=e=>{d.spares=e.target.value};
+    svcContent.appendChild(h("div",{style:{marginBottom:"4px"}},lbl("Spares Used"),sparesTA));
+    const notesTA=h("textarea",{style:{width:"100%",minHeight:"35px",padding:"5px",border:"1px solid #334155",borderRadius:"4px",background:"#0f172a",color:"#e2e8f0",fontSize:"12px",fontFamily:"monospace",resize:"vertical"}});
+    notesTA.value=d.notes||"";notesTA.oninput=e=>{d.notes=e.target.value};
+    svcContent.appendChild(h("div",{style:{marginBottom:"4px"}},lbl("Notes"),notesTA));
+    svcContent.appendChild(h("div",{className:"row"},fld("Tech",d.tech,v=>{d.tech=v;render()},100),fld("KM",d.km,v=>{d.km=v;render()},70)));
+    content.appendChild(sec("Service","#f59e0b",svcContent));
+  }
+
+  // ---- SIGN-OFF ----
+  if(S.phase==="signoff"){
+    const d=S.data;
+    const so=S.signoff;
+    if(!so.dateTime)so.dateTime=new Date().toLocaleString("en-GB");
+    if(!so.techName)so.techName=S.techName||d.tech||"";
+
+    // Title
+    content.appendChild(h("div",{style:{textAlign:"center",marginBottom:"12px"}},
+      h("div",{style:{fontSize:"16px",fontWeight:"800",color:"#f59e0b"}},"SERVICE SIGN-OFF"),
+      h("div",{style:{fontSize:"12px",color:"#94a3b8",marginTop:"2px"}},`${S.selSite?.name||""} • ${so.dateTime}`)
+    ));
+
+    // Parameter Summary (read-only)
+    function summSec(title,rows){
+      const tbl=h("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:"11px"}});
+      rows.forEach(([l,v])=>{
+        if(v==null||v==="")return;
+        const tr=h("tr",{style:{borderBottom:"1px solid #1e293b"}});
+        tr.appendChild(h("td",{style:{padding:"3px 6px",color:"#94a3b8",fontWeight:"600",width:"45%"}},l));
+        tr.appendChild(h("td",{style:{padding:"3px 6px",color:"#e2e8f0",fontFamily:"monospace"}},String(v)));
+        tbl.appendChild(tr);
+      });
+      return sec(title,"#64748b",tbl);
+    }
+    function summChTable(title,headers,data){
+      const tbl=h("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:"11px"}});
+      const thead=h("tr",{style:{background:"#1e293b"}});
+      headers.forEach(hdr=>thead.appendChild(h("th",{style:{padding:"3px 5px",color:"#94a3b8",fontSize:"10px"}},hdr)));
+      tbl.appendChild(thead);
+      data.forEach(row=>{
+        const tr=h("tr",{style:{borderTop:"1px solid #1e293b"}});
+        row.forEach((cell,i)=>tr.appendChild(h("td",{style:{padding:"2px 5px",color:i===0?"#f59e0b":"#e2e8f0",fontWeight:i===0?"700":"400",fontSize:"11px",fontFamily:i===0?"inherit":"monospace",textAlign:"center"}},String(cell||""))));
+        tbl.appendChild(tr);
+      });
+      return sec(title,"#64748b",h("div",{style:{overflowX:"auto"}},tbl));
+    }
+
+    // Machine info
+    content.appendChild(summSec("Machine",[["Customer",d.header.customer],["Model",d.header.machineType],["MCH No",d.header.mchNo],["BV No",d.header.bvNo],["Date",d.header.date],["Technician",d.tech]]));
+
+    // X-ray
+    content.appendChild(summSec("X-ray Tubes",[["HV1 Set",d.xray.kv1],["HV1 Real",d.xray.kv1R],["mA1 Set",d.xray.ma1],["mA1 Real",d.xray.ma1R],["HV2 Set",d.xray.kv2],["HV2 Real",d.xray.kv2R],["mA2 Set",d.xray.ma2],["mA2 Real",d.xray.ma2R]]));
+
+    // PMT
+    content.appendChild(summChTable("PMT Voltages",["CH","SET","REAL"],d.pmtVoltages.map(r=>[r.ch,r.set,r.real])));
+
+    // Detection
+    content.appendChild(summChTable("Detection",["CH","SC THR","FC THR"],d.det.scThr.map((v,i)=>[i+1,v,d.det.fcThr[i]||""])));
+    content.appendChild(summSec("Detection Algorithm",[["T Convol",d.det.tConvol],["Convol",d.det.convol],["Tau Min",d.det.tauMin],["Tau Max",d.det.tauMax],["Ratio Min",d.det.ratioMin],["Ratio Max",d.det.ratioMax],["T Thresh",d.det.tThresh]]));
+
+    // Air Record
+    content.appendChild(summChTable("Air Record",["CH","OFFSET","Air(mV)"],d.airRecord.map(r=>[r.ch,r.offset,r.airMv])));
+
+    // Air Ref Gain
+    content.appendChild(summChTable("Air Ref Gain",["CH","Gain"],d.airRefGain.map(r=>[r.ch,r.gain])));
+
+    // X-ray Hours
+    content.appendChild(summSec("X-ray Hours",[["HV1",d.xrayH.hv1],["Tube1 Rpl",d.xrayH.tr1],["HV2",d.xrayH.hv2],["Tube2 Rpl",d.xrayH.tr2],["Gate",d.xrayH.gate]]));
+
+    // Ejectors
+    content.appendChild(summSec("Ejector Settings",[["On Time",d.ej.onTime],["Delay",d.ej.delayTime],["Active Delay",d.ej.activeDly],["Wash",d.ej.washTime],["1or2",d.ej.wash12]]));
+    const nEj2=d.header.machineType==="LS-20-09"?5:4;
+    const ejRows=[["Duration",...["ch1","ch2","ch3","ch4","ch5"].slice(0,nEj2).map(c=>d.ejMs.tOpen[c])],["Resp Lag",...["ch1","ch2","ch3","ch4","ch5"].slice(0,nEj2).map(c=>d.ejMs.tRet[c])]];
+    content.appendChild(summChTable("Ejector Test (ms)",["",...Array.from({length:nEj2},(_,i)=>`EJ${i+1}`)],ejRows));
+
+    // Registration
+    content.appendChild(summSec("Registration",[["Block Time",d.reg.blockTime]]));
+
+    // Service info
+    content.appendChild(summSec("Service",[["Del Note",d.delNote],["Spares",d.spares],["Notes",d.notes],["KM",d.km]]));
+
+    // ---- SIGNATURES ----
+    content.appendChild(h("div",{style:{marginTop:"16px",marginBottom:"8px",fontSize:"14px",fontWeight:"800",color:"#f59e0b",textAlign:"center"}},"SIGNATURES"));
+
+    // Signature pad creator
+    function createSigPad(label,nameKey,sigKey){
+      const wrap=h("div",{style:{marginBottom:"16px",padding:"12px",background:"rgba(15,23,42,0.6)",borderRadius:"10px",border:"1px solid #1e293b"}});
+      wrap.appendChild(h("div",{style:{fontSize:"12px",fontWeight:"700",color:"#e2e8f0",marginBottom:"6px"}},label));
+
+      // Name input
+      const nameRow=h("div",{style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"8px"}});
+      nameRow.appendChild(h("span",{style:{fontSize:"11px",color:"#94a3b8",fontWeight:"600"}},"Name:"));
+      const nameInp=h("input",{type:"text",className:"inp",value:so[nameKey]||"",style:{flex:"1",textAlign:"left",fontSize:"13px"}});
+      nameInp.oninput=e=>{so[nameKey]=e.target.value};
+      nameRow.appendChild(nameInp);
+      wrap.appendChild(nameRow);
+
+      // Signature canvas
+      wrap.appendChild(h("div",{style:{fontSize:"10px",color:"#64748b",marginBottom:"4px"}},"Sign below with finger:"));
+      const canvas=h("canvas",{width:"320",height:"120",style:{width:"100%",height:"120px",background:"#fff",borderRadius:"6px",border:"2px solid #334155",touchAction:"none"}});
+
+      let drawing=false;let ctx=null;
+      function initCtx(){if(!ctx){ctx=canvas.getContext("2d");ctx.strokeStyle="#000";ctx.lineWidth=2;ctx.lineCap="round";ctx.lineJoin="round"}}
+      // Restore existing signature
+      if(so[sigKey]){
+        setTimeout(()=>{
+          initCtx();
+          const img=new Image();img.onload=()=>{ctx.drawImage(img,0,0)};img.src=so[sigKey];
+        },50);
+      }
+
+      function getPos(e){
+        const rect=canvas.getBoundingClientRect();
+        const t=e.touches?e.touches[0]:e;
+        return{x:(t.clientX-rect.left)*(canvas.width/rect.width),y:(t.clientY-rect.top)*(canvas.height/rect.height)};
+      }
+      function start(e){e.preventDefault();initCtx();drawing=true;const p=getPos(e);ctx.beginPath();ctx.moveTo(p.x,p.y)}
+      function move(e){e.preventDefault();if(!drawing)return;const p=getPos(e);ctx.lineTo(p.x,p.y);ctx.stroke()}
+      function end(e){e.preventDefault();drawing=false;so[sigKey]=canvas.toDataURL("image/png")}
+
+      canvas.addEventListener("mousedown",start);canvas.addEventListener("mousemove",move);canvas.addEventListener("mouseup",end);canvas.addEventListener("mouseleave",end);
+      canvas.addEventListener("touchstart",start,{passive:false});canvas.addEventListener("touchmove",move,{passive:false});canvas.addEventListener("touchend",end,{passive:false});
+
+      wrap.appendChild(canvas);
+
+      // Clear button
+      const clearBtn=h("button",{className:"btn",style:{marginTop:"6px",padding:"4px 12px",border:"1px solid #334155",background:"transparent",color:"#94a3b8",fontSize:"10px"},onClick:()=>{
+        initCtx();ctx.clearRect(0,0,canvas.width,canvas.height);so[sigKey]=null;
+      }},"Clear Signature");
+      wrap.appendChild(clearBtn);
+      return wrap;
+    }
+
+    content.appendChild(createSigPad("Technician","techName","techSig"));
+    content.appendChild(createSigPad("Operator / Site Representative","opName","opSig"));
+
+    // Sign-off button
+    const signBtn=h("button",{className:"btn",style:{width:"100%",padding:"14px",marginTop:"10px",background:so.techSig&&so.opSig?"linear-gradient(135deg,#22c55e,#16a34a)":"#334155",
+      color:so.techSig&&so.opSig?"#fff":"#64748b",fontSize:"14px",borderRadius:"10px"},
+      onClick:()=>{
+        if(!so.techName){alert("Enter technician name");return}
+        if(!so.techSig){alert("Technician must sign");return}
+        if(!so.opName){alert("Enter operator name");return}
+        if(!so.opSig){alert("Operator must sign");return}
+        so.signed=true;so.dateTime=new Date().toLocaleString("en-GB");
+        // Save with job
+        S.data.signoff={techName:so.techName,opName:so.opName,dateTime:so.dateTime,techSig:so.techSig,opSig:so.opSig};
+        saveMachineDetails();
+        alert("✅ Sign-off complete!\nBoth signatures saved with service record.");
+        render();
+      }},so.signed?"✅ Signed Off":"✍️ Complete Sign-Off");
+    content.appendChild(signBtn);
+
+    if(so.signed){
+      content.appendChild(h("div",{style:{marginTop:"10px",padding:"10px",background:"rgba(34,197,94,0.1)",border:"1px solid rgba(34,197,94,0.3)",borderRadius:"8px",textAlign:"center"}},
+        h("div",{style:{color:"#22c55e",fontWeight:"700",fontSize:"13px"}},"✅ Signed off on "+so.dateTime),
+        h("div",{style:{color:"#94a3b8",fontSize:"11px",marginTop:"2px"}},`Tech: ${so.techName} • Operator: ${so.opName}`)
+      ));
+
+      // Share Report button
+      const shareBtn=h("button",{className:"btn",style:{width:"100%",padding:"14px",marginTop:"10px",background:"linear-gradient(135deg,#3b82f6,#2563eb)",color:"#fff",fontSize:"14px",borderRadius:"10px"},
+        onClick:()=>generateReportImage()
+      },"📤 Generate Report for WhatsApp");
+      content.appendChild(shareBtn);
+    }
+  }
+
+  // ---- LOG ----
+  if(S.phase==="log"){
+    content.appendChild(h("pre",{style:{padding:"10px",background:"rgba(15,23,42,0.6)",borderRadius:"8px",border:"1px solid #1e293b",color:"#e2e8f0",fontSize:"11px",fontFamily:"monospace",overflow:"auto",maxHeight:"70vh",whiteSpace:"pre-wrap"}},S.log||"No activity yet."));
+  }
+
+  app.appendChild(content);
+}
+
+// Initial render
+render();
+</script>
+</body>
+</html>
